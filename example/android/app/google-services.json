@@ -1,0 +1,92 @@
+{
+  "project_info": {
+    "project_number": "832624065646",
+    "project_id": "deafott",
+    "storage_bucket": "deafott.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:832624065646:android:19ef1baf8e76557de7ba7f",
+        "android_client_info": {
+          "package_name": "com.example.csn_flutter_example"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "832624065646-jeo7ju9n0j3jruglv5lq7t137rn5ctkp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBLh2P3Hr31a-w743GffrpOExTVokIygNg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "832624065646-h93oj782ufoudmvh5o2rfoarlosoo4rm.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:832624065646:android:587b825b09aab163e7ba7f",
+        "android_client_info": {
+          "package_name": "com.smoothcoders.deafott"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "832624065646-0oj5t6ta406dd0a2cgso1pg2rhn6mgca.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.smoothcoders.deafott",
+            "certificate_hash": "7bc03594bc7454f6db982d67b3495d49f6c5e574"
+          }
+        },
+        {
+          "client_id": "832624065646-bcg8s55tn4d2i1o805uthjsqtb33h0lm.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.smoothcoders.deafott",
+            "certificate_hash": "984b0a2f2e654b9b1565a3c840268f9e4cef7165"
+          }
+        },
+        {
+          "client_id": "832624065646-qfd9suko8cih8qf0u4u84s8oanoma7ld.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.smoothcoders.deafott",
+            "certificate_hash": "47ed6cf9e0398dcb3b1ffc544600b5c3890d7076"
+          }
+        },
+        {
+          "client_id": "832624065646-jeo7ju9n0j3jruglv5lq7t137rn5ctkp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBLh2P3Hr31a-w743GffrpOExTVokIygNg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "832624065646-h93oj782ufoudmvh5o2rfoarlosoo4rm.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
