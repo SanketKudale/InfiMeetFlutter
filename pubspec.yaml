@@ -1,8 +1,14 @@
 name: csn_flutter
-version: 0.1.0
-description: Flutter SDK for CSN audio/video calling backend.
-repository: https://example.com/csn_flutter
-publish_to: "none"
+version: 0.1.1
+description: Flutter SDK for CSN realtime audio/video calling with prebuilt request-queue and call UI.
+repository:  https://github.com/SanketKudale/InfiMeetFlutter
+homepage:  https://github.com/SanketKudale/InfiMeetFlutter
+issue_tracker:  https://github.com/SanketKudale/InfiMeetFlutter/issues
+topics:
+  - webrtc
+  - video-calling
+  - signaling
+  - realtime
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
@@ -13,10 +19,7 @@ dependencies:
     sdk: flutter
   http: ^1.2.2
   web_socket_channel: ^2.4.0
-  flutter_webrtc: 1.2.1
-
-dependency_overrides:
-  webrtc_interface: 1.3.0
+  flutter_webrtc: ^1.2.1
 
 dev_dependencies:
   flutter_lints: ^4.0.0

@@ -1,42 +1,50 @@
 # CSN Flutter SDK
 
-A reusable Flutter package to talk to the CSN audio/video calling backend.
+Flutter SDK for CSN realtime calling flows:
+- user request queue
+- admin accept/decline
+- prebuilt call screen
+- API + WebSocket signaling clients
 
-## Install
-Add this package to your app `pubspec.yaml` (path dependency while local):
+## Important: Backend Requirement
 
-```
+This Flutter SDK requires the CSN Node backend to work.
+
+The backend is provided separately as a paid product.
+
+For backend access and licensing:
+`sksanketkudale@gmail.com`
+
+## Installation
+
+Add this package in your app `pubspec.yaml`:
+
+```yaml
 dependencies:
-  csn_flutter:
-    path: ../csn_flutter
+  csn_flutter: ^0.1.0
 ```
 
-## Usage
+Then run:
 
-### Create SDK
+```bash
+flutter pub get
 ```
+
+## Quick Start
+
+Create SDK:
+
+```dart
 final sdk = CsnSdk(
-  baseUrl: 'http://localhost:3000',
-  wsUrl: 'ws://localhost:3000/ws',
-  jwt: '<your-jwt>',
+  baseUrl: 'http://<your-server>:6713',
+  wsUrl: 'ws://<your-server>:6713/ws',
+  jwt: '<access-token>',
 );
 ```
 
-### Theme (configurable)
-```
-return MaterialApp(
-  theme: csnTheme(
-    brightness: Brightness.light,
-    override: CsnThemeData.light().copyWith(
-      primary: Colors.indigo,
-      accent: Colors.teal,
-    ),
-  ),
-);
-```
+Initialize a call controller:
 
-### Call UI (prebuilt)
-```
+```dart
 final controller = CsnBasicCallController(
   apiClient: sdk.api,
   signalingClient: sdk.signaling(),
@@ -44,8 +52,12 @@ final controller = CsnBasicCallController(
 );
 
 await controller.initialize();
-await controller.join('room-1');
+await controller.join('room-id');
+```
 
+Open prebuilt call screen:
+
+```dart
 Navigator.of(context).push(
   MaterialPageRoute(
     builder: (_) => CsnCallScreen(controller: controller),
@@ -53,6 +65,17 @@ Navigator.of(context).push(
 );
 ```
 
-## Notes
-- This package wires API + signaling. It does not include a mediasoup client; for real media, integrate flutter_webrtc + mediasoup client logic.
-- WebSocket signaling protocol is described in your backend docs.
+## Included Modules
+
+- `CsnApiClient`
+- `CsnSignalingClient`
+- `CsnUserRequestController`
+- `CsnAdminRequestController`
+- `CsnBasicCallController`
+- `CsnCallScreen`
+- `csnTheme` / `CsnThemeData`
+
+## Backend Purchase / Support
+
+For backend purchase, setup, and production deployment support:
+`sksanketkudale@gmail.com`

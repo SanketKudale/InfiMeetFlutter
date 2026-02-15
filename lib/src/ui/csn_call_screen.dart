@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'dart:math' as math;
 
 import '../theme/csn_theme.dart';
 import '../theme/csn_theme_data.dart';
@@ -29,6 +28,8 @@ class CsnCallScreen extends StatefulWidget {
 
 class _CsnCallScreenState extends State<CsnCallScreen> {
   String? _lastErrorMessage;
+  int _remoteQuarterTurns = 0;
+  bool _remoteMirror = false;
 
   @override
   void initState() {
@@ -54,7 +55,8 @@ class _CsnCallScreenState extends State<CsnCallScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(errorMessage),
-          backgroundColor: (widget.themeOverride ?? CsnTheme.of(context)).danger,
+          backgroundColor:
+              (widget.themeOverride ?? CsnTheme.of(context)).danger,
         ),
       );
     }
@@ -81,7 +83,24 @@ class _CsnCallScreenState extends State<CsnCallScreen> {
             children: [
               _TopBar(state: state, theme: theme),
               const SizedBox(height: 12),
-              Expanded(child: _Grid(participants: state.participants, theme: theme)),
+              Expanded(
+                child: _Grid(
+                  participants: state.participants,
+                  theme: theme,
+                  remoteQuarterTurns: _remoteQuarterTurns,
+                  remoteMirror: _remoteMirror,
+                  onRotateRemote: () {
+                    setState(() {
+                      _remoteQuarterTurns = (_remoteQuarterTurns + 1) % 4;
+                    });
+                  },
+                  onToggleRemoteMirror: () {
+                    setState(() {
+                      _remoteMirror = !_remoteMirror;
+                    });
+                  },
+                ),
+              ),
               const SizedBox(height: 12),
               _Controls(
                 controller: widget.controller,
@@ -145,10 +164,21 @@ class _TopBar extends StatelessWidget {
 }
 
 class _Grid extends StatelessWidget {
-  const _Grid({required this.participants, required this.theme});
+  const _Grid({
+    required this.participants,
+    required this.theme,
+    required this.remoteQuarterTurns,
+    required this.remoteMirror,
+    required this.onRotateRemote,
+    required this.onToggleRemoteMirror,
+  });
 
   final List<CsnParticipant> participants;
   final CsnThemeData theme;
+  final int remoteQuarterTurns;
+  final bool remoteMirror;
+  final VoidCallback onRotateRemote;
+  final VoidCallback onToggleRemoteMirror;
 
   @override
   Widget build(BuildContext context) {
@@ -174,6 +204,10 @@ class _Grid extends StatelessWidget {
           child: _ParticipantTile(
             participant: remotes.first,
             theme: theme,
+            remoteQuarterTurns: remoteQuarterTurns,
+            remoteMirror: remoteMirror,
+            onRotateRemote: onRotateRemote,
+            onToggleRemoteMirror: onToggleRemoteMirror,
           ),
         ),
         Positioned(
@@ -193,11 +227,19 @@ class _ParticipantTile extends StatelessWidget {
     required this.participant,
     required this.theme,
     this.pip = false,
+    this.remoteQuarterTurns = 0,
+    this.remoteMirror = false,
+    this.onRotateRemote,
+    this.onToggleRemoteMirror,
   });
 
   final CsnParticipant participant;
   final CsnThemeData theme;
   final bool pip;
+  final int remoteQuarterTurns;
+  final bool remoteMirror;
+  final VoidCallback? onRotateRemote;
+  final VoidCallback? onToggleRemoteMirror;
 
   @override
   Widget build(BuildContext context) {
@@ -213,10 +255,43 @@ class _ParticipantTile extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(pip ? 12 : 16),
               child: participant.renderer != null && participant.videoEnabled
-                  ? _VideoView(participant: participant)
-                  : _AvatarFallback(name: participant.displayName, theme: theme),
+                  ? _VideoView(
+                      participant: participant,
+                      remoteQuarterTurns: remoteQuarterTurns,
+                      remoteMirror: remoteMirror,
+                    )
+                  : _AvatarFallback(
+                      name: participant.displayName, theme: theme),
             ),
           ),
+          if (!participant.isLocal && !pip)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: onRotateRemote,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black45,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.rotate_right),
+                    tooltip: 'Rotate remote',
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    onPressed: onToggleRemoteMirror,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black45,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.flip),
+                    tooltip: 'Mirror remote',
+                  ),
+                ],
+              ),
+            ),
           Positioned(
             left: 12,
             bottom: 12,
@@ -235,7 +310,10 @@ class _ParticipantTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                _StatusDot(color: participant.audioEnabled ? theme.success : theme.danger),
+                _StatusDot(
+                    color: participant.audioEnabled
+                        ? theme.success
+                        : theme.danger),
               ],
             ),
           ),
@@ -246,30 +324,57 @@ class _ParticipantTile extends StatelessWidget {
 }
 
 class _VideoView extends StatelessWidget {
-  const _VideoView({required this.participant});
+  const _VideoView({
+    required this.participant,
+    this.remoteQuarterTurns = 0,
+    this.remoteMirror = false,
+  });
 
   final CsnParticipant participant;
+  final int remoteQuarterTurns;
+  final bool remoteMirror;
 
   @override
   Widget build(BuildContext context) {
     final renderer = participant.renderer!;
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final isPortraitBox = constraints.maxHeight > constraints.maxWidth;
-        final isLandscapeFrame =
-            renderer.videoWidth > 0 && renderer.videoHeight > 0 && renderer.videoWidth > renderer.videoHeight;
-        final rotateRemote = !participant.isLocal && isPortraitBox && isLandscapeFrame;
-        final view = RTCVideoView(
-          renderer,
-          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-          mirror: participant.isLocal,
-        );
-        if (!rotateRemote) return view;
-        return Transform.rotate(
-          angle: math.pi / 2,
-          child: view,
-        );
-      },
+      builder: (context, constraints) => ValueListenableBuilder<RTCVideoValue>(
+        valueListenable: renderer,
+        builder: (context, value, _) {
+          Widget view = RTCVideoView(
+            renderer,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+            mirror: participant.isLocal ? true : remoteMirror,
+          );
+
+          if (participant.isLocal) return view;
+
+          final normalizedRotation = ((value.rotation % 360) + 360) % 360;
+          final hasSize = value.width > 0 && value.height > 0;
+          final isPortraitBox = constraints.maxHeight >= constraints.maxWidth;
+          final isLandscapeFrame = hasSize && value.width > value.height;
+          final isPortraitFrame = hasSize && value.height > value.width;
+          final needsFallbackQuarterTurn =
+              (isPortraitBox && isLandscapeFrame) ||
+                  (!isPortraitBox && isPortraitFrame);
+
+          var autoTurns = ((normalizedRotation ~/ 90) % 4 + 4) % 4;
+          if (normalizedRotation == 0 && needsFallbackQuarterTurn) {
+            autoTurns = 1;
+          }
+
+          final manualTurns = ((remoteQuarterTurns % 4) + 4) % 4;
+          final totalTurns = (autoTurns + manualTurns) % 4;
+          if (!participant.isLocal && totalTurns != 0) {
+            view = RotatedBox(
+              quarterTurns: totalTurns,
+              child: view,
+            );
+          }
+
+          return view;
+        },
+      ),
     );
   }
 }
@@ -309,7 +414,8 @@ class _AvatarFallback extends StatelessWidget {
 }
 
 class _Controls extends StatelessWidget {
-  const _Controls({required this.controller, required this.theme, this.onEndCall});
+  const _Controls(
+      {required this.controller, required this.theme, this.onEndCall});
 
   final CsnCallController controller;
   final CsnThemeData theme;
@@ -334,7 +440,9 @@ class _Controls extends StatelessWidget {
             onPressed: controller.toggleAudio,
           ),
           _ControlButton(
-            icon: controller.localVideoEnabled ? Icons.videocam : Icons.videocam_off,
+            icon: controller.localVideoEnabled
+                ? Icons.videocam
+                : Icons.videocam_off,
             label: controller.localVideoEnabled ? 'Video' : 'No Video',
             color: controller.localVideoEnabled ? theme.primary : theme.warning,
             onPressed: controller.toggleVideo,
@@ -412,7 +520,8 @@ class _Badge extends StatelessWidget {
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+      child: Text(label,
+          style: TextStyle(color: color, fontWeight: FontWeight.w600)),
     );
   }
 }
