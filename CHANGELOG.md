@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+- Added support request type selection with popup helper:
+  - `showCsnRequestModePicker(...)`
+  - `pickAndSubmitRequestMode(...)`
+  - request types: `video_call` and `live_chat`.
+- Added role-based backend auth models and API methods:
+  - admin/executive login support
+  - executive list/create support
+  - admin and executive history fetch support.
+- Updated request queue/action API paths for executive role workflows.
+- Added automatic signaling reconnect with periodic keepalive ping for better realtime reliability.
+- Added one-to-one end synchronization support:
+  - user-side request end API client method
+  - automatic call UI exit when call/request is ended remotely.
+- Added screen sharing support in video calls:
+  - new call controller APIs:
+    - `screenSharingEnabled`
+    - `toggleScreenShare()`
+  - new share/stop-share control in `CsnCallScreen`.
+- Improved end-call behavior so both participants are terminated consistently when session closes.
+
 ## 0.1.1
 
 - Fixed remote participant video orientation handling in `CsnCallScreen`.

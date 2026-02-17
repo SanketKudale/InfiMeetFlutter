@@ -13,6 +13,7 @@ class CsnUserRequestState {
     this.requestId,
     this.userId,
     this.status = 'idle',
+    this.requestType,
     this.position,
     this.etaSeconds,
     this.roomId,
@@ -24,6 +25,7 @@ class CsnUserRequestState {
   final String? requestId;
   final String? userId;
   final String status;
+  final CsnSupportRequestType? requestType;
   final int? position;
   final int? etaSeconds;
   final String? roomId;
@@ -35,6 +37,7 @@ class CsnUserRequestState {
     String? requestId,
     String? userId,
     String? status,
+    CsnSupportRequestType? requestType,
     int? position,
     int? etaSeconds,
     String? roomId,
@@ -46,11 +49,13 @@ class CsnUserRequestState {
       requestId: requestId ?? this.requestId,
       userId: userId ?? this.userId,
       status: status ?? this.status,
+      requestType: requestType ?? this.requestType,
       position: position ?? this.position,
       etaSeconds: etaSeconds ?? this.etaSeconds,
       roomId: roomId ?? this.roomId,
       token: token ?? this.token,
-      timeoutWarningSeconds: timeoutWarningSeconds ?? this.timeoutWarningSeconds,
+      timeoutWarningSeconds:
+          timeoutWarningSeconds ?? this.timeoutWarningSeconds,
       errorMessage: errorMessage ?? this.errorMessage,
     );
   }
@@ -72,13 +77,19 @@ class CsnUserRequestController extends ChangeNotifier {
   CsnSignalingClient? _signalingClient;
   StreamSubscription? _sub;
 
-  Future<void> submitRequest({String? userId}) async {
+  Future<void> submitRequest({
+    String? userId,
+    CsnSupportRequestType? requestType,
+  }) async {
     try {
       _state = _state.copyWith(status: 'submitting', errorMessage: null);
       notifyListeners();
 
       final api = CsnApiClient(baseUrl: baseUrl);
-      final result = await api.createCallRequest(userId: userId);
+      final result = await api.createCallRequest(
+        userId: userId,
+        requestType: requestType,
+      );
       _apiClient = CsnApiClient(baseUrl: baseUrl, jwt: result.token);
       _signalingClient = CsnSignalingClient(wsUrl: wsUrl, jwt: result.token);
 
@@ -86,6 +97,7 @@ class CsnUserRequestController extends ChangeNotifier {
         requestId: result.requestId,
         userId: result.userId,
         status: result.status,
+        requestType: result.requestType ?? requestType,
         position: result.position,
         etaSeconds: result.etaSeconds,
         token: result.token,
@@ -108,6 +120,18 @@ class CsnUserRequestController extends ChangeNotifier {
       _applyStatus(status);
     } catch (error, stackTrace) {
       debugLog('Refresh request failed', error, stackTrace);
+    }
+  }
+
+  Future<void> endRequest() async {
+    final requestId = _state.requestId;
+    if (requestId == null || _apiClient == null) return;
+    try {
+      await _apiClient!.endUserRequest(requestId);
+      _state = _state.copyWith(status: 'ended');
+      notifyListeners();
+    } catch (error, stackTrace) {
+      debugLog('End request failed', error, stackTrace);
     }
   }
 
@@ -139,6 +163,7 @@ class CsnUserRequestController extends ChangeNotifier {
       'requestId': payload['requestId'],
       'userId': payload['userId'] ?? _state.userId ?? '',
       'status': payload['status'] ?? _state.status,
+      'requestType': payload['requestType'] ?? _state.requestType?.wireValue,
       'position': payload['position'],
       'etaSeconds': payload['etaSeconds'],
       'roomId': payload['roomId'],
@@ -157,6 +182,7 @@ class CsnUserRequestController extends ChangeNotifier {
   void _applyStatus(CallRequestStatusResponse status) {
     _state = _state.copyWith(
       status: status.status,
+      requestType: status.requestType ?? _state.requestType,
       position: status.position,
       etaSeconds: status.etaSeconds,
       roomId: status.roomId,
@@ -257,12 +283,15 @@ class CsnAdminRequestController extends ChangeNotifier {
   void _handleSignal(CsnSignalMessage message) {
     if (message.type != 'queue-updated') return;
     final items = (message.payload?['items'] as List<dynamic>? ?? [])
-        .map((item) => AdminQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            AdminQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
     _queue = items;
     _averageCallSeconds =
-        (message.payload?['averageCallSeconds'] as num?)?.round() ?? _averageCallSeconds;
-    _activeCount = (message.payload?['activeCount'] as num?)?.round() ?? _activeCount;
+        (message.payload?['averageCallSeconds'] as num?)?.round() ??
+            _averageCallSeconds;
+    _activeCount =
+        (message.payload?['activeCount'] as num?)?.round() ?? _activeCount;
     _lastQueueUpdate = DateTime.now();
     _errorMessage = null;
     notifyListeners();

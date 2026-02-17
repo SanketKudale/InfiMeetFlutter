@@ -25,46 +25,56 @@ class CsnApiClient {
 
   Uri _uri(String path, [Map<String, dynamic>? query]) {
     final uri = Uri.parse(baseUrl + path);
-    return query == null ? uri : uri.replace(queryParameters: query.map((k, v) => MapEntry(k, '$v')));
+    return query == null
+        ? uri
+        : uri.replace(queryParameters: query.map((k, v) => MapEntry(k, '$v')));
   }
 
   Future<HealthResponse> health() async {
     final response = await _client.get(_uri('/health'));
     _ensureOk(response);
-    return HealthResponse.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return HealthResponse.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<RoomSettings> getRoom(String roomId) async {
     final response = await _client.get(_uri('/rooms/$roomId'));
     _ensureOk(response);
-    return RoomSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return RoomSettings.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<RoomSettings> createRoom(String roomId) async {
-    final response = await _client.post(_uri('/rooms/$roomId'), headers: _headers());
+    final response =
+        await _client.post(_uri('/rooms/$roomId'), headers: _headers());
     _ensureOk(response);
-    return RoomSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return RoomSettings.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<RoomSettings> updateRoom(String roomId, Map<String, dynamic> patch) async {
+  Future<RoomSettings> updateRoom(
+      String roomId, Map<String, dynamic> patch) async {
     final response = await _client.patch(
       _uri('/rooms/$roomId'),
       headers: _headers(jsonBody: true),
       body: jsonEncode(patch),
     );
     _ensureOk(response);
-    return RoomSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return RoomSettings.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<void> deleteRoom(String roomId) async {
-    final response = await _client.delete(_uri('/rooms/$roomId'), headers: _headers());
+    final response =
+        await _client.delete(_uri('/rooms/$roomId'), headers: _headers());
     _ensureOk(response);
   }
 
   Future<RoomPeerList> getPeers(String roomId) async {
     final response = await _client.get(_uri('/rooms/$roomId/peers'));
     _ensureOk(response);
-    return RoomPeerList.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return RoomPeerList.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<List<RoomMember>> getActiveMembers(String roomId) async {
@@ -72,11 +82,15 @@ class CsnApiClient {
     _ensureOk(response);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final items = data['members'] as List<dynamic>;
-    return items.map((item) => RoomMember.fromJson(item as Map<String, dynamic>)).toList();
+    return items
+        .map((item) => RoomMember.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<List<RoomMemberHistory>> getHistory(String roomId, {int limit = 50}) async {
-    final response = await _client.get(_uri('/rooms/$roomId/members/history', {'limit': limit}));
+  Future<List<RoomMemberHistory>> getHistory(String roomId,
+      {int limit = 50}) async {
+    final response = await _client
+        .get(_uri('/rooms/$roomId/members/history', {'limit': limit}));
     _ensureOk(response);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final items = data['history'] as List<dynamic>;
@@ -95,19 +109,25 @@ class CsnApiClient {
   }
 
   Future<RoomSettings> lockRoom(String roomId) async {
-    final response = await _client.post(_uri('/rooms/$roomId/moderation/lock'), headers: _headers());
+    final response = await _client.post(_uri('/rooms/$roomId/moderation/lock'),
+        headers: _headers());
     _ensureOk(response);
-    return RoomSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return RoomSettings.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<RoomSettings> unlockRoom(String roomId) async {
-    final response = await _client.post(_uri('/rooms/$roomId/moderation/unlock'), headers: _headers());
+    final response = await _client
+        .post(_uri('/rooms/$roomId/moderation/unlock'), headers: _headers());
     _ensureOk(response);
-    return RoomSettings.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return RoomSettings.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<List<String>> getAllowedUsers(String roomId) async {
-    final response = await _client.get(_uri('/rooms/$roomId/moderation/allowed-users'), headers: _headers());
+    final response = await _client.get(
+        _uri('/rooms/$roomId/moderation/allowed-users'),
+        headers: _headers());
     _ensureOk(response);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     return (data['users'] as List<dynamic>).map((e) => e.toString()).toList();
@@ -140,18 +160,22 @@ class CsnApiClient {
   }
 
   Future<Map<String, dynamic>> getRtpCapabilities(String roomId) async {
-    final response = await _client.get(_uri('/mediasoup/rooms/$roomId/rtp-capabilities'));
+    final response =
+        await _client.get(_uri('/mediasoup/rooms/$roomId/rtp-capabilities'));
     _ensureOk(response);
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<TransportOptions> createTransport(String roomId) async {
-    final response = await _client.post(_uri('/mediasoup/rooms/$roomId/transports'));
+    final response =
+        await _client.post(_uri('/mediasoup/rooms/$roomId/transports'));
     _ensureOk(response);
-    return TransportOptions.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return TransportOptions.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<void> connectTransport(String roomId, String transportId, Map<String, dynamic> dtlsParameters) async {
+  Future<void> connectTransport(String roomId, String transportId,
+      Map<String, dynamic> dtlsParameters) async {
     final response = await _client.post(
       _uri('/mediasoup/rooms/$roomId/transports/$transportId/connect'),
       headers: _headers(jsonBody: true),
@@ -176,7 +200,8 @@ class CsnApiClient {
       }),
     );
     _ensureOk(response);
-    return ProducerResponse.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return ProducerResponse.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<ConsumerResponse> consume(
@@ -195,7 +220,8 @@ class CsnApiClient {
       }),
     );
     _ensureOk(response);
-    return ConsumerResponse.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return ConsumerResponse.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<void> pauseProducer(String roomId, String producerId) async {
@@ -230,23 +256,34 @@ class CsnApiClient {
     _ensureOk(response);
   }
 
-  Future<Map<String, dynamic>> producerStats(String roomId, String producerId) async {
-    final response = await _client.get(_uri('/mediasoup/rooms/$roomId/producers/$producerId/stats'));
+  Future<Map<String, dynamic>> producerStats(
+      String roomId, String producerId) async {
+    final response = await _client
+        .get(_uri('/mediasoup/rooms/$roomId/producers/$producerId/stats'));
     _ensureOk(response);
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> consumerStats(String roomId, String consumerId) async {
-    final response = await _client.get(_uri('/mediasoup/rooms/$roomId/consumers/$consumerId/stats'));
+  Future<Map<String, dynamic>> consumerStats(
+      String roomId, String consumerId) async {
+    final response = await _client
+        .get(_uri('/mediasoup/rooms/$roomId/consumers/$consumerId/stats'));
     _ensureOk(response);
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<CallRequestCreateResponse> createCallRequest({String? userId}) async {
+  Future<CallRequestCreateResponse> createCallRequest({
+    String? userId,
+    CsnSupportRequestType? requestType,
+  }) async {
+    final payload = <String, dynamic>{
+      'userId': userId,
+      if (requestType != null) 'requestType': requestType.wireValue,
+    };
     final response = await _client.post(
       _uri('/requests'),
       headers: _headers(jsonBody: true),
-      body: jsonEncode({'userId': userId}),
+      body: jsonEncode(payload),
     );
     _ensureOk(response);
     return CallRequestCreateResponse.fromJson(
@@ -254,7 +291,8 @@ class CsnApiClient {
     );
   }
 
-  Future<CallRequestStatusResponse> getCallRequestStatus(String requestId) async {
+  Future<CallRequestStatusResponse> getCallRequestStatus(
+      String requestId) async {
     final response = await _client.get(
       _uri('/requests/$requestId'),
       headers: _headers(),
@@ -267,7 +305,7 @@ class CsnApiClient {
 
   Future<AdminQueueResponse> getAdminQueue() async {
     final response = await _client.get(
-      _uri('/admin/requests'),
+      _uri('/executive/requests'),
       headers: _headers(),
     );
     _ensureOk(response);
@@ -289,7 +327,7 @@ class CsnApiClient {
 
   Future<String> acceptRequest(String requestId) async {
     final response = await _client.post(
-      _uri('/admin/requests/$requestId/accept'),
+      _uri('/executive/requests/$requestId/accept'),
       headers: _headers(),
     );
     _ensureOk(response);
@@ -299,7 +337,7 @@ class CsnApiClient {
 
   Future<void> declineRequest(String requestId) async {
     final response = await _client.post(
-      _uri('/admin/requests/$requestId/decline'),
+      _uri('/executive/requests/$requestId/decline'),
       headers: _headers(),
     );
     _ensureOk(response);
@@ -307,7 +345,15 @@ class CsnApiClient {
 
   Future<void> endRequest(String requestId) async {
     final response = await _client.post(
-      _uri('/admin/requests/$requestId/end'),
+      _uri('/executive/requests/$requestId/end'),
+      headers: _headers(),
+    );
+    _ensureOk(response);
+  }
+
+  Future<void> endUserRequest(String requestId) async {
+    final response = await _client.post(
+      _uri('/requests/$requestId/end'),
       headers: _headers(),
     );
     _ensureOk(response);
@@ -315,7 +361,7 @@ class CsnApiClient {
 
   Future<void> registerAdminPushToken(String token) async {
     final response = await _client.post(
-      _uri('/admin/push-token'),
+      _uri('/executive/push-token'),
       headers: _headers(jsonBody: true),
       body: jsonEncode({'token': token}),
     );
@@ -324,11 +370,105 @@ class CsnApiClient {
 
   Future<void> unregisterAdminPushToken(String token) async {
     final response = await _client.delete(
-      _uri('/admin/push-token'),
+      _uri('/executive/push-token'),
       headers: _headers(jsonBody: true),
       body: jsonEncode({'token': token}),
     );
     _ensureOk(response);
+  }
+
+  Future<AuthLoginResponse> loginAdmin({
+    required String email,
+    required String password,
+  }) async {
+    final response = await _client.post(
+      _uri('/auth/admin/login'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+      }),
+    );
+    _ensureOk(response);
+    return AuthLoginResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AuthLoginResponse> loginExecutive({
+    required String email,
+    required String password,
+  }) async {
+    final response = await _client.post(
+      _uri('/auth/executive/login'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+      }),
+    );
+    _ensureOk(response);
+    return AuthLoginResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<AuthUserProfile>> listExecutives() async {
+    final response = await _client.get(
+      _uri('/admin/executives'),
+      headers: _headers(),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final items = data['items'] as List<dynamic>? ?? const [];
+    return items
+        .map((item) => AuthUserProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<AuthUserProfile> createExecutive({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    final response = await _client.post(
+      _uri('/admin/executives'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'name': name,
+        'email': email,
+        'password': password,
+      }),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return AuthUserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
+  Future<List<StaffHistoryItem>> getAdminHistory({int limit = 200}) async {
+    final response = await _client.get(
+      _uri('/admin/history', {'limit': limit}),
+      headers: _headers(),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final items = data['items'] as List<dynamic>? ?? const [];
+    return items
+        .map((item) => StaffHistoryItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<StaffHistoryItem>> getExecutiveHistory({int limit = 200}) async {
+    final response = await _client.get(
+      _uri('/executive/history', {'limit': limit}),
+      headers: _headers(),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final items = data['items'] as List<dynamic>? ?? const [];
+    return items
+        .map((item) => StaffHistoryItem.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   void close() => _client.close();

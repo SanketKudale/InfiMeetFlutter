@@ -20,6 +20,7 @@ class CsnBasicCallController extends CsnCallController {
   bool _localAudioEnabled = true;
   bool _localVideoEnabled = true;
   bool _speakerEnabled = true;
+  bool _screenSharingEnabled = false;
   String _roomId = '';
   String? _errorMessage;
 
@@ -31,6 +32,7 @@ class CsnBasicCallController extends CsnCallController {
   RTCRtpSender? _videoSender;
   MediaStream? _localStream;
   MediaStream? _localPreviewStream;
+  MediaStream? _screenStream;
   String? _remoteUserId;
   bool _makingOffer = false;
   bool _handlingOffer = false;
@@ -52,6 +54,9 @@ class CsnBasicCallController extends CsnCallController {
 
   @override
   bool get speakerEnabled => _speakerEnabled;
+
+  @override
+  bool get screenSharingEnabled => _screenSharingEnabled;
 
   @override
   Future<void> initialize() async {
@@ -113,7 +118,8 @@ class CsnBasicCallController extends CsnCallController {
     if (next) {
       final result = await _ensureLocalTrack(kind: 'audio');
       if (!result.ok) {
-        _failWithError('Failed to enable microphone', result.error, result.stackTrace);
+        _failWithError(
+            'Failed to enable microphone', result.error, result.stackTrace);
         return;
       }
       if (result.requiresRenegotiation) {
@@ -129,7 +135,8 @@ class CsnBasicCallController extends CsnCallController {
     if (next) {
       final result = await _ensureLocalTrack(kind: 'video');
       if (!result.ok) {
-        _failWithError('Failed to enable camera', result.error, result.stackTrace);
+        _failWithError(
+            'Failed to enable camera', result.error, result.stackTrace);
         return;
       }
       if (result.requiresRenegotiation) {
@@ -137,6 +144,45 @@ class CsnBasicCallController extends CsnCallController {
       }
     }
     await _setLocalVideoEnabled(next);
+  }
+
+  @override
+  Future<void> toggleScreenShare() async {
+    if (_screenSharingEnabled) {
+      await _stopScreenShare();
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final displayStream = await navigator.mediaDevices.getDisplayMedia({
+        'audio': false,
+        'video': true,
+      });
+      final tracks = displayStream.getVideoTracks();
+      if (tracks.isEmpty) {
+        await displayStream.dispose();
+        return;
+      }
+      final screenTrack = tracks.first;
+      _screenStream = displayStream;
+      _screenSharingEnabled = true;
+      _localVideoEnabled = true;
+      _setScreenTrackOnEnded(screenTrack);
+      final renegotiate = await _replaceOrAddSenderTrack(screenTrack);
+      if (renegotiate) {
+        await _safeRenegotiate();
+      }
+
+      final local = _ensureLocalParticipant();
+      local.renderer ??= await _createRenderer();
+      local.renderer!.srcObject = displayStream;
+      local.videoEnabled = true;
+      _sendLocalMediaState();
+      notifyListeners();
+    } catch (error, stackTrace) {
+      _failWithError('Failed to start screen sharing', error, stackTrace);
+    }
   }
 
   @override
@@ -274,8 +320,7 @@ class CsnBasicCallController extends CsnCallController {
       final remotes = room.peers.where((id) => id != localUserId).toList();
       if (remotes.isNotEmpty) {
         _remoteUserId = remotes.first;
-        final shouldOffer =
-            localUserId.compareTo(_remoteUserId!) < 0;
+        final shouldOffer = localUserId.compareTo(_remoteUserId!) < 0;
         if (shouldOffer) {
           await _createAndSendOffer();
         }
@@ -304,7 +349,18 @@ class CsnBasicCallController extends CsnCallController {
       }
       _remoteUserId = null;
       await _disposePeerConnection();
+      _connectionState = CsnCallConnectionState.ended;
       notifyListeners();
+      return;
+    }
+
+    if (message.type == 'request-updated') {
+      final status = message.payload?['status']?.toString();
+      final roomId = message.payload?['roomId']?.toString();
+      if ((status == 'ended' || status == 'declined') &&
+          (roomId == null || roomId == _roomId)) {
+        await leave();
+      }
       return;
     }
 
@@ -515,10 +571,12 @@ class CsnBasicCallController extends CsnCallController {
     try {
       final stream = _localStream;
       if (stream == null) {
-        return _TrackEnsureResult.error(StateError('Local stream is not initialized'));
+        return _TrackEnsureResult.error(
+            StateError('Local stream is not initialized'));
       }
 
-      final existingTracks = kind == 'audio' ? stream.getAudioTracks() : stream.getVideoTracks();
+      final existingTracks =
+          kind == 'audio' ? stream.getAudioTracks() : stream.getVideoTracks();
       final staleTracks = List<MediaStreamTrack>.from(existingTracks);
 
       final extra = await navigator.mediaDevices.getUserMedia({
@@ -530,8 +588,12 @@ class CsnBasicCallController extends CsnCallController {
             : false,
       });
       final newTrack = kind == 'audio'
-          ? (extra.getAudioTracks().isNotEmpty ? extra.getAudioTracks().first : null)
-          : (extra.getVideoTracks().isNotEmpty ? extra.getVideoTracks().first : null);
+          ? (extra.getAudioTracks().isNotEmpty
+              ? extra.getAudioTracks().first
+              : null)
+          : (extra.getVideoTracks().isNotEmpty
+              ? extra.getVideoTracks().first
+              : null);
       if (newTrack == null) {
         await extra.dispose();
         return _TrackEnsureResult.error(StateError('No $kind track available'));
@@ -619,6 +681,9 @@ class CsnBasicCallController extends CsnCallController {
   }
 
   Future<void> _setLocalVideoEnabled(bool enabled) async {
+    if (!enabled && _screenSharingEnabled) {
+      await _stopScreenShare();
+    }
     _localVideoEnabled = enabled;
     final stream = _localStream;
     if (stream != null) {
@@ -658,6 +723,52 @@ class CsnBasicCallController extends CsnCallController {
     local.videoEnabled = enabled;
     notifyListeners();
     _sendLocalMediaState();
+  }
+
+  Future<void> _stopScreenShare() async {
+    final screen = _screenStream;
+    _screenStream = null;
+    _screenSharingEnabled = false;
+    if (screen != null) {
+      for (final track in screen.getTracks()) {
+        try {
+          await track.stop();
+        } catch (_) {
+          // no-op
+        }
+      }
+      try {
+        await screen.dispose();
+      } catch (_) {
+        // no-op
+      }
+    }
+
+    if (!_localVideoEnabled) {
+      if (_videoSender != null) {
+        await _videoSender!.replaceTrack(null);
+      }
+      _sendLocalMediaState();
+      return;
+    }
+
+    final result = await _ensureLocalTrack(kind: 'video');
+    if (!result.ok) {
+      _failWithError('Failed to restore camera after screen sharing',
+          result.error, result.stackTrace);
+      return;
+    }
+    if (result.requiresRenegotiation) {
+      await _safeRenegotiate();
+    }
+    await _refreshLocalPreview();
+    _sendLocalMediaState();
+  }
+
+  void _setScreenTrackOnEnded(MediaStreamTrack track) {
+    track.onEnded = () {
+      unawaited(_stopScreenShare().then((_) => notifyListeners()));
+    };
   }
 
   Future<void> _refreshLocalPreview() async {
@@ -746,6 +857,14 @@ class CsnBasicCallController extends CsnCallController {
     unawaited(_disposePeerConnection());
     final stream = _localStream;
     _localStream = null;
+    final screen = _screenStream;
+    _screenStream = null;
+    if (screen != null) {
+      for (final track in screen.getTracks()) {
+        track.stop();
+      }
+      unawaited(screen.dispose());
+    }
     unawaited(_disposeLocalPreviewStream());
     if (stream != null) {
       for (final track in stream.getTracks()) {

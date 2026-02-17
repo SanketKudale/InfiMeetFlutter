@@ -30,6 +30,7 @@ class _CsnCallScreenState extends State<CsnCallScreen> {
   String? _lastErrorMessage;
   int _remoteQuarterTurns = 0;
   bool _remoteMirror = false;
+  bool _autoExitHandled = false;
 
   @override
   void initState() {
@@ -61,6 +62,15 @@ class _CsnCallScreenState extends State<CsnCallScreen> {
       );
     }
     setState(() {});
+    if (!_autoExitHandled &&
+        widget.controller.state.connectionState ==
+            CsnCallConnectionState.ended) {
+      _autoExitHandled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).maybePop();
+      });
+    }
   }
 
   @override
@@ -446,6 +456,15 @@ class _Controls extends StatelessWidget {
             label: controller.localVideoEnabled ? 'Video' : 'No Video',
             color: controller.localVideoEnabled ? theme.primary : theme.warning,
             onPressed: controller.toggleVideo,
+          ),
+          _ControlButton(
+            icon: controller.screenSharingEnabled
+                ? Icons.stop_screen_share
+                : Icons.screen_share,
+            label: controller.screenSharingEnabled ? 'Stop Share' : 'Share',
+            color:
+                controller.screenSharingEnabled ? theme.success : theme.accent,
+            onPressed: controller.toggleScreenShare,
           ),
           _ControlButton(
             icon: Icons.cameraswitch,

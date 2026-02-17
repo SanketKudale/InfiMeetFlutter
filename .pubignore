@@ -1,0 +1,7 @@
+.dart_tool/
+.idea/
+.fvm/
+.tmp_quickrtc/
+.tmp_quickrtc.tar.gz
+.flutter-plugins-dependencies
+example/android/app/google-services.json

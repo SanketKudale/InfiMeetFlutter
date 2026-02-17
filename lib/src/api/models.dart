@@ -81,7 +81,8 @@ class RoomMemberHistory {
   final String? leftAt;
   final String? reason;
 
-  factory RoomMemberHistory.fromJson(Map<String, dynamic> json) => RoomMemberHistory(
+  factory RoomMemberHistory.fromJson(Map<String, dynamic> json) =>
+      RoomMemberHistory(
         userId: json['userId'] as String,
         joinedAt: json['joinedAt'] as String,
         leftAt: json['leftAt'] as String?,
@@ -102,11 +103,13 @@ class TransportOptions {
   final List<dynamic> iceCandidates;
   final Map<String, dynamic> dtlsParameters;
 
-  factory TransportOptions.fromJson(Map<String, dynamic> json) => TransportOptions(
+  factory TransportOptions.fromJson(Map<String, dynamic> json) =>
+      TransportOptions(
         id: json['id'] as String,
         iceParameters: Map<String, dynamic>.from(json['iceParameters'] as Map),
         iceCandidates: List<dynamic>.from(json['iceCandidates'] as List),
-        dtlsParameters: Map<String, dynamic>.from(json['dtlsParameters'] as Map),
+        dtlsParameters:
+            Map<String, dynamic>.from(json['dtlsParameters'] as Map),
       );
 }
 
@@ -117,7 +120,8 @@ class ProducerResponse {
   final String kind;
   final String? codec;
 
-  factory ProducerResponse.fromJson(Map<String, dynamic> json) => ProducerResponse(
+  factory ProducerResponse.fromJson(Map<String, dynamic> json) =>
+      ProducerResponse(
         id: json['id'] as String,
         kind: json['kind'] as String,
         codec: json['codec'] as String?,
@@ -139,13 +143,30 @@ class ConsumerResponse {
   final Map<String, dynamic> rtpParameters;
   final String? codec;
 
-  factory ConsumerResponse.fromJson(Map<String, dynamic> json) => ConsumerResponse(
+  factory ConsumerResponse.fromJson(Map<String, dynamic> json) =>
+      ConsumerResponse(
         id: json['id'] as String,
         producerId: json['producerId'] as String,
         kind: json['kind'] as String,
         rtpParameters: Map<String, dynamic>.from(json['rtpParameters'] as Map),
         codec: json['codec'] as String?,
       );
+}
+
+enum CsnSupportRequestType {
+  videoCall('video_call'),
+  liveChat('live_chat');
+
+  const CsnSupportRequestType(this.wireValue);
+
+  final String wireValue;
+
+  static CsnSupportRequestType? fromWireValue(String? value) {
+    for (final type in CsnSupportRequestType.values) {
+      if (type.wireValue == value) return type;
+    }
+    return null;
+  }
 }
 
 class CallRequestCreateResponse {
@@ -156,6 +177,7 @@ class CallRequestCreateResponse {
     required this.position,
     required this.etaSeconds,
     required this.token,
+    required this.requestType,
   });
 
   final String requestId;
@@ -164,14 +186,18 @@ class CallRequestCreateResponse {
   final int position;
   final int etaSeconds;
   final String token;
+  final CsnSupportRequestType? requestType;
 
-  factory CallRequestCreateResponse.fromJson(Map<String, dynamic> json) => CallRequestCreateResponse(
+  factory CallRequestCreateResponse.fromJson(Map<String, dynamic> json) =>
+      CallRequestCreateResponse(
         requestId: json['requestId'] as String,
         userId: json['userId'] as String,
         status: json['status'] as String,
         position: json['position'] as int,
         etaSeconds: json['etaSeconds'] as int,
         token: json['token'] as String,
+        requestType:
+            CsnSupportRequestType.fromWireValue(json['requestType'] as String?),
       );
 }
 
@@ -183,6 +209,7 @@ class CallRequestStatusResponse {
     required this.position,
     required this.etaSeconds,
     required this.roomId,
+    required this.requestType,
   });
 
   final String requestId;
@@ -191,14 +218,18 @@ class CallRequestStatusResponse {
   final int? position;
   final int? etaSeconds;
   final String? roomId;
+  final CsnSupportRequestType? requestType;
 
-  factory CallRequestStatusResponse.fromJson(Map<String, dynamic> json) => CallRequestStatusResponse(
+  factory CallRequestStatusResponse.fromJson(Map<String, dynamic> json) =>
+      CallRequestStatusResponse(
         requestId: json['requestId'] as String,
         userId: json['userId'] as String,
         status: json['status'] as String,
         position: json['position'] as int?,
         etaSeconds: json['etaSeconds'] as int?,
         roomId: json['roomId'] as String?,
+        requestType:
+            CsnSupportRequestType.fromWireValue(json['requestType'] as String?),
       );
 }
 
@@ -237,9 +268,11 @@ class AdminQueueResponse {
   final int averageCallSeconds;
   final int activeCount;
 
-  factory AdminQueueResponse.fromJson(Map<String, dynamic> json) => AdminQueueResponse(
+  factory AdminQueueResponse.fromJson(Map<String, dynamic> json) =>
+      AdminQueueResponse(
         items: (json['items'] as List<dynamic>? ?? [])
-            .map((item) => AdminQueueItem.fromJson(item as Map<String, dynamic>))
+            .map(
+                (item) => AdminQueueItem.fromJson(item as Map<String, dynamic>))
             .toList(),
         averageCallSeconds: (json['averageCallSeconds'] as num?)?.round() ?? 0,
         activeCount: (json['activeCount'] as num?)?.round() ?? 0,
@@ -255,8 +288,90 @@ class AdminTokenResponse {
   final String userId;
   final String token;
 
-  factory AdminTokenResponse.fromJson(Map<String, dynamic> json) => AdminTokenResponse(
+  factory AdminTokenResponse.fromJson(Map<String, dynamic> json) =>
+      AdminTokenResponse(
         userId: json['userId'] as String,
         token: json['token'] as String,
+      );
+}
+
+class AuthUserProfile {
+  AuthUserProfile({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.role,
+    required this.isActive,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String name;
+  final String email;
+  final String role;
+  final bool isActive;
+  final String createdAt;
+
+  factory AuthUserProfile.fromJson(Map<String, dynamic> json) =>
+      AuthUserProfile(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        email: json['email'] as String,
+        role: json['role'] as String,
+        isActive: json['isActive'] as bool? ?? true,
+        createdAt: json['createdAt'] as String? ?? '',
+      );
+}
+
+class AuthLoginResponse {
+  AuthLoginResponse({
+    required this.token,
+    required this.user,
+  });
+
+  final String token;
+  final AuthUserProfile user;
+
+  factory AuthLoginResponse.fromJson(Map<String, dynamic> json) =>
+      AuthLoginResponse(
+        token: json['token'] as String,
+        user: AuthUserProfile.fromJson(json['user'] as Map<String, dynamic>),
+      );
+}
+
+class StaffHistoryItem {
+  StaffHistoryItem({
+    required this.requestId,
+    required this.userId,
+    required this.executiveId,
+    required this.executiveName,
+    required this.status,
+    required this.createdAt,
+    required this.acceptedAt,
+    required this.endedAt,
+    required this.timeTakenSeconds,
+  });
+
+  final String requestId;
+  final String userId;
+  final String? executiveId;
+  final String? executiveName;
+  final String status;
+  final String createdAt;
+  final String? acceptedAt;
+  final String? endedAt;
+  final int? timeTakenSeconds;
+
+  factory StaffHistoryItem.fromJson(Map<String, dynamic> json) =>
+      StaffHistoryItem(
+        requestId: json['requestId'] as String,
+        userId: json['userId'] as String,
+        executiveId: json['executiveId'] as String?,
+        executiveName: json['executiveName'] as String?,
+        status: json['status'] as String,
+        createdAt: json['createdAt'] as String,
+        acceptedAt: json['acceptedAt'] as String?,
+        endedAt: json['endedAt'] as String?,
+        timeTakenSeconds: json['timeTakenSeconds'] as int?,
       );
 }

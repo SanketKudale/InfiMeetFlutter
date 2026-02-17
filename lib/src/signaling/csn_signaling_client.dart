@@ -13,12 +13,26 @@ class CsnSignalingClient {
   final String wsUrl;
   final String? jwt;
   WebSocketChannel? _channel;
+  bool _closedManually = false;
+  bool _connecting = false;
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+  Timer? _keepAliveTimer;
   final _controller = StreamController<CsnSignalMessage>.broadcast();
 
   Stream<CsnSignalMessage> get messages => _controller.stream;
+  bool get isConnected => _channel != null;
 
   Future<void> connect() async {
-    if (_channel != null) return;
+    _closedManually = false;
+    _reconnectTimer?.cancel();
+    if (_channel != null || _connecting) return;
+    await _connectInternal();
+  }
+
+  Future<void> _connectInternal() async {
+    if (_channel != null || _connecting || _closedManually) return;
+    _connecting = true;
     final uri = _buildWsUri();
     try {
       debugLog(
@@ -28,6 +42,8 @@ class CsnSignalingClient {
         },
       );
       _channel = IOWebSocketChannel.connect(uri);
+      _reconnectAttempts = 0;
+      _startKeepAlive();
       _channel!.stream.listen(
         (data) {
           final jsonData = jsonDecode(data as String) as Map<String, dynamic>;
@@ -36,73 +52,92 @@ class CsnSignalingClient {
         onError: (Object error, StackTrace stackTrace) {
           debugLog('Signaling socket error', error, stackTrace);
           _controller.addError(error, stackTrace);
+          _channel = null;
+          _stopKeepAlive();
+          _scheduleReconnect();
         },
         onDone: () {
           debugLog('Signaling socket closed');
           _channel = null;
+          _stopKeepAlive();
+          _scheduleReconnect();
         },
       );
     } catch (error, stackTrace) {
       debugLog('Failed to connect signaling: $uri', error, stackTrace);
       _channel = null;
+      _scheduleReconnect();
       rethrow;
+    } finally {
+      _connecting = false;
     }
   }
 
   void send(CsnSignalMessage message) {
     if (_channel == null) {
-      debugLog('Attempted to send signaling message before connect: ${message.type}');
+      debugLog(
+          'Attempted to send signaling message before connect: ${message.type}');
       return;
     }
     try {
       _channel!.sink.add(jsonEncode(message.toJson()));
     } catch (error, stackTrace) {
-      debugLog('Failed to send signaling message: ${message.type}', error, stackTrace);
+      debugLog('Failed to send signaling message: ${message.type}', error,
+          stackTrace);
       _controller.addError(error, stackTrace);
     }
   }
 
-  void joinRoom(String roomId) => send(CsnSignalMessage('join', {'roomId': roomId}));
+  void joinRoom(String roomId) =>
+      send(CsnSignalMessage('join', {'roomId': roomId}));
   void leaveRoom() => send(CsnSignalMessage('leave'));
   void getRtpCapabilities() => send(CsnSignalMessage('get-rtp-capabilities'));
   void createTransport() => send(CsnSignalMessage('create-transport'));
-  void connectTransport(String transportId, Map<String, dynamic> dtlsParameters) =>
+  void connectTransport(
+          String transportId, Map<String, dynamic> dtlsParameters) =>
       send(CsnSignalMessage('connect-transport', {
         'transportId': transportId,
         'dtlsParameters': dtlsParameters,
       }));
 
-  void produce(String transportId, String kind, Map<String, dynamic> rtpParameters) =>
+  void produce(String transportId, String kind,
+          Map<String, dynamic> rtpParameters) =>
       send(CsnSignalMessage('produce', {
         'transportId': transportId,
         'kind': kind,
         'rtpParameters': rtpParameters,
       }));
 
-  void consume(String transportId, String producerId, Map<String, dynamic> rtpCapabilities) =>
+  void consume(String transportId, String producerId,
+          Map<String, dynamic> rtpCapabilities) =>
       send(CsnSignalMessage('consume', {
         'transportId': transportId,
         'producerId': producerId,
         'rtpCapabilities': rtpCapabilities,
       }));
 
-  void closeProducer(String producerId) => send(CsnSignalMessage('close-producer', {
+  void closeProducer(String producerId) =>
+      send(CsnSignalMessage('close-producer', {
         'producerId': producerId,
       }));
 
-  void pauseProducer(String producerId) => send(CsnSignalMessage('pause-producer', {
+  void pauseProducer(String producerId) =>
+      send(CsnSignalMessage('pause-producer', {
         'producerId': producerId,
       }));
 
-  void resumeProducer(String producerId) => send(CsnSignalMessage('resume-producer', {
+  void resumeProducer(String producerId) =>
+      send(CsnSignalMessage('resume-producer', {
         'producerId': producerId,
       }));
 
-  void pauseConsumer(String consumerId) => send(CsnSignalMessage('pause-consumer', {
+  void pauseConsumer(String consumerId) =>
+      send(CsnSignalMessage('pause-consumer', {
         'consumerId': consumerId,
       }));
 
-  void resumeConsumer(String consumerId) => send(CsnSignalMessage('resume-consumer', {
+  void resumeConsumer(String consumerId) =>
+      send(CsnSignalMessage('resume-consumer', {
         'consumerId': consumerId,
       }));
 
@@ -110,13 +145,40 @@ class CsnSignalingClient {
 
   Future<void> close() async {
     try {
-      await _controller.close();
+      _closedManually = true;
+      _reconnectTimer?.cancel();
+      _stopKeepAlive();
       await _channel?.sink.close();
+      await _controller.close();
     } catch (error, stackTrace) {
       debugLog('Failed to close signaling client', error, stackTrace);
     } finally {
       _channel = null;
     }
+  }
+
+  void _scheduleReconnect() {
+    if (_closedManually) return;
+    if (_reconnectTimer != null && _reconnectTimer!.isActive) return;
+    final attempt = _reconnectAttempts + 1;
+    _reconnectAttempts = attempt;
+    final seconds = attempt > 6 ? 12 : attempt * 2;
+    _reconnectTimer = Timer(Duration(seconds: seconds), () {
+      unawaited(_connectInternal());
+    });
+  }
+
+  void _startKeepAlive() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (_channel == null || _closedManually) return;
+      send(CsnSignalMessage('ping'));
+    });
+  }
+
+  void _stopKeepAlive() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
   }
 
   Uri _buildWsUri() {
