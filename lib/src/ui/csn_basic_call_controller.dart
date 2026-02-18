@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../csn_flutter.dart';
+import '../platform/csn_media_projection_bridge.dart';
 
 class CsnBasicCallController extends CsnCallController {
   CsnBasicCallController({
@@ -33,10 +34,12 @@ class CsnBasicCallController extends CsnCallController {
   MediaStream? _localStream;
   MediaStream? _localPreviewStream;
   MediaStream? _screenStream;
+  final Map<String, MediaStream> _remoteSyntheticStreams = {};
   String? _remoteUserId;
   bool _makingOffer = false;
   bool _handlingOffer = false;
   bool _negotiating = false;
+  bool _endingFromPeerState = false;
 
   @override
   CsnCallUiState get state => CsnCallUiState(
@@ -108,6 +111,7 @@ class CsnBasicCallController extends CsnCallController {
       // no-op
     }
     await _disposePeerConnection();
+    _errorMessage = null;
     _connectionState = CsnCallConnectionState.ended;
     notifyListeners();
   }
@@ -155,10 +159,17 @@ class CsnBasicCallController extends CsnCallController {
     }
 
     try {
-      final displayStream = await navigator.mediaDevices.getDisplayMedia({
-        'audio': false,
-        'video': true,
-      });
+      if (WebRTC.platformIsAndroid) {
+        final granted = await Helper.requestCapturePermission();
+        if (!granted) {
+          _failWithError('Screen capture permission denied', null, null);
+          return;
+        }
+        await CsnMediaProjectionBridge.startForegroundService();
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      }
+
+      final displayStream = await _getDisplayStreamWithAndroidRetry();
       final tracks = displayStream.getVideoTracks();
       if (tracks.isEmpty) {
         await displayStream.dispose();
@@ -169,10 +180,11 @@ class CsnBasicCallController extends CsnCallController {
       _screenSharingEnabled = true;
       _localVideoEnabled = true;
       _setScreenTrackOnEnded(screenTrack);
-      final renegotiate = await _replaceOrAddSenderTrack(screenTrack);
-      if (renegotiate) {
-        await _safeRenegotiate();
-      }
+      await _switchOutgoingVideoTrack(
+        track: screenTrack,
+        stream: displayStream,
+      );
+      await _safeRenegotiate();
 
       final local = _ensureLocalParticipant();
       local.renderer ??= await _createRenderer();
@@ -181,7 +193,34 @@ class CsnBasicCallController extends CsnCallController {
       _sendLocalMediaState();
       notifyListeners();
     } catch (error, stackTrace) {
+      if (WebRTC.platformIsAndroid) {
+        await CsnMediaProjectionBridge.stopForegroundService();
+      }
       _failWithError('Failed to start screen sharing', error, stackTrace);
+    }
+  }
+
+  Future<MediaStream> _getDisplayStreamWithAndroidRetry() async {
+    Future<MediaStream> capture() {
+      return navigator.mediaDevices.getDisplayMedia({
+        'audio': false,
+        'video': true,
+      });
+    }
+
+    try {
+      return await capture();
+    } catch (error) {
+      final shouldRetry = WebRTC.platformIsAndroid &&
+          error
+              .toString()
+              .contains('Media projections require a foreground service');
+      if (!shouldRetry) rethrow;
+      await CsnMediaProjectionBridge.stopForegroundService();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await CsnMediaProjectionBridge.startForegroundService();
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      return capture();
     }
   }
 
@@ -263,9 +302,19 @@ class CsnBasicCallController extends CsnCallController {
     };
 
     pc.onTrack = (event) async {
-      if (event.streams.isEmpty) return;
-      final stream = event.streams.first;
-      final remote = _ensureRemoteParticipant(_remoteUserId ?? 'remote');
+      final remoteUserId = _remoteUserId ?? 'remote';
+      final remote = _ensureRemoteParticipant(remoteUserId);
+      MediaStream stream;
+      if (event.streams.isNotEmpty) {
+        stream = event.streams.first;
+      } else {
+        stream = await _ensureRemoteSyntheticStream(remoteUserId);
+        final alreadyAdded =
+            stream.getTracks().any((track) => track.id == event.track.id);
+        if (!alreadyAdded) {
+          stream.addTrack(event.track);
+        }
+      }
       remote.renderer ??= await _createRenderer();
       remote.renderer!.srcObject = stream;
       if (event.track.kind == 'audio') {
@@ -279,10 +328,25 @@ class CsnBasicCallController extends CsnCallController {
     pc.onConnectionState = (state) {
       debugLog('Peer connection state', state.toString());
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
-        _failWithError('Peer connection closed', null, null);
+        unawaited(_endCallFromPeerState(state));
       }
     };
+  }
+
+  Future<void> _endCallFromPeerState(RTCPeerConnectionState state) async {
+    if (_endingFromPeerState) return;
+    if (_connectionState == CsnCallConnectionState.ended) return;
+    _endingFromPeerState = true;
+    try {
+      debugLog('Call ended from peer state', state.toString());
+      await leave();
+    } catch (error, stackTrace) {
+      _failWithError('Peer connection closed', error, stackTrace);
+    } finally {
+      _endingFromPeerState = false;
+    }
   }
 
   Future<void> _createAndSendOffer() async {
@@ -546,6 +610,22 @@ class CsnBasicCallController extends CsnCallController {
       }
     }
     _participants.removeWhere((p) => p.id == userId);
+    final synthetic = _remoteSyntheticStreams.remove(userId);
+    if (synthetic != null) {
+      try {
+        await synthetic.dispose();
+      } catch (_) {
+        // no-op
+      }
+    }
+  }
+
+  Future<MediaStream> _ensureRemoteSyntheticStream(String userId) async {
+    final existing = _remoteSyntheticStreams[userId];
+    if (existing != null) return existing;
+    final created = await createLocalMediaStream('csn_remote_$userId');
+    _remoteSyntheticStreams[userId] = created;
+    return created;
   }
 
   Future<void> _disposePeerConnection() async {
@@ -654,6 +734,25 @@ class CsnBasicCallController extends CsnCallController {
     return true;
   }
 
+  Future<void> _switchOutgoingVideoTrack({
+    required MediaStreamTrack track,
+    required MediaStream stream,
+  }) async {
+    final pc = _peerConnection;
+    if (pc == null) return;
+    final oldSender = _videoSender;
+    if (oldSender != null) {
+      try {
+        await pc.removeTrack(oldSender);
+      } catch (_) {
+        // no-op
+      }
+      _videoSender = null;
+    }
+    final sender = await pc.addTrack(track, stream);
+    _videoSender = sender;
+  }
+
   Future<void> _setLocalAudioEnabled(bool enabled) async {
     _localAudioEnabled = enabled;
     final stream = _localStream;
@@ -748,6 +847,9 @@ class CsnBasicCallController extends CsnCallController {
       if (_videoSender != null) {
         await _videoSender!.replaceTrack(null);
       }
+      if (WebRTC.platformIsAndroid) {
+        await CsnMediaProjectionBridge.stopForegroundService();
+      }
       _sendLocalMediaState();
       return;
     }
@@ -758,10 +860,18 @@ class CsnBasicCallController extends CsnCallController {
           result.error, result.stackTrace);
       return;
     }
-    if (result.requiresRenegotiation) {
-      await _safeRenegotiate();
+    final local = _localStream;
+    final videoTrack = local?.getVideoTracks().isNotEmpty == true
+        ? local!.getVideoTracks().first
+        : null;
+    if (videoTrack != null && local != null) {
+      await _switchOutgoingVideoTrack(track: videoTrack, stream: local);
     }
+    await _safeRenegotiate();
     await _refreshLocalPreview();
+    if (WebRTC.platformIsAndroid) {
+      await CsnMediaProjectionBridge.stopForegroundService();
+    }
     _sendLocalMediaState();
   }
 
@@ -864,6 +974,9 @@ class CsnBasicCallController extends CsnCallController {
         track.stop();
       }
       unawaited(screen.dispose());
+      if (WebRTC.platformIsAndroid) {
+        unawaited(CsnMediaProjectionBridge.stopForegroundService());
+      }
     }
     unawaited(_disposeLocalPreviewStream());
     if (stream != null) {
@@ -878,6 +991,10 @@ class CsnBasicCallController extends CsnCallController {
         unawaited(renderer.dispose());
       }
     }
+    for (final stream in _remoteSyntheticStreams.values) {
+      unawaited(stream.dispose());
+    }
+    _remoteSyntheticStreams.clear();
     unawaited(signalingClient.close());
     apiClient.close();
     super.dispose();

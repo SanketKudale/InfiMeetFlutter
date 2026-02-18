@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:csn_flutter/csn_flutter.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -6,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const String _appName = 'Deafott Customer Support';
 
@@ -13,6 +15,12 @@ enum _StaffRole {
   admin,
   executive,
 }
+
+const String _sessionTokenKey = 'csn_session_token';
+const String _sessionRoleKey = 'csn_session_role';
+const String _sessionUserIdKey = 'csn_session_user_id';
+const String _sessionUserNameKey = 'csn_session_user_name';
+const String _sessionUserEmailKey = 'csn_session_user_email';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -116,6 +124,7 @@ class _CsnHomePageState extends State<CsnHomePage> {
   _StaffRole _selectedRole = _StaffRole.executive;
   String? _loginError;
   bool _authenticated = false;
+  bool _sessionReady = false;
   bool _loadingLogin = false;
   bool _loadingAdminData = false;
   bool _creatingExecutive = false;
@@ -146,9 +155,15 @@ class _CsnHomePageState extends State<CsnHomePage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _restoreSession();
       await _initNotifications();
       await _initFirebaseMessaging();
       await _requestMediaPermissionsOnce();
+      if (mounted) {
+        setState(() {
+          _sessionReady = true;
+        });
+      }
     });
   }
 
@@ -263,6 +278,7 @@ class _CsnHomePageState extends State<CsnHomePage> {
       _currentUserName = login.user.name;
       _currentUserEmail = login.user.email;
       _currentRole = _selectedRole;
+      await _saveSession();
       setState(() {
         _authenticated = true;
         _loginError = null;
@@ -280,6 +296,72 @@ class _CsnHomePageState extends State<CsnHomePage> {
     } finally {
       _loadingLogin = false;
       if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _saveSession() async {
+    final token = _adminJwt?.trim() ?? '';
+    final role = _currentRole;
+    final userId = _currentUserId?.trim() ?? '';
+    if (token.isEmpty || role == null || userId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sessionTokenKey, token);
+    await prefs.setString(_sessionRoleKey, role.name);
+    await prefs.setString(_sessionUserIdKey, userId);
+    await prefs.setString(_sessionUserNameKey, _currentUserName ?? '');
+    await prefs.setString(_sessionUserEmailKey, _currentUserEmail ?? '');
+  }
+
+  Future<void> _clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_sessionTokenKey);
+    await prefs.remove(_sessionRoleKey);
+    await prefs.remove(_sessionUserIdKey);
+    await prefs.remove(_sessionUserNameKey);
+    await prefs.remove(_sessionUserEmailKey);
+  }
+
+  Future<void> _restoreSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_sessionTokenKey)?.trim() ?? '';
+    final roleValue = prefs.getString(_sessionRoleKey)?.trim() ?? '';
+    if (token.isEmpty || roleValue.isEmpty || _isJwtExpired(token)) {
+      await _clearSession();
+      return;
+    }
+    final role = _StaffRole.values.where((it) => it.name == roleValue).toList();
+    if (role.isEmpty) {
+      await _clearSession();
+      return;
+    }
+    _adminJwt = token;
+    _currentRole = role.first;
+    _selectedRole = role.first;
+    _currentUserId = prefs.getString(_sessionUserIdKey);
+    _currentUserName = prefs.getString(_sessionUserNameKey);
+    _currentUserEmail = prefs.getString(_sessionUserEmailKey);
+    _authenticated = true;
+    if (_currentRole == _StaffRole.executive) {
+      await _connectExecutive();
+    } else {
+      await _loadAdminDashboard();
+    }
+  }
+
+  bool _isJwtExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length < 2) return true;
+      final payload = parts[1];
+      final normalized = base64Url.normalize(payload);
+      final json = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+      if (json is! Map<String, dynamic>) return true;
+      final exp = json['exp'];
+      if (exp is! num) return true;
+      final expiresAt = DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000);
+      return DateTime.now().isAfter(expiresAt);
+    } catch (_) {
+      return true;
     }
   }
 
@@ -307,7 +389,13 @@ class _CsnHomePageState extends State<CsnHomePage> {
       api.close();
     } catch (error, stackTrace) {
       debugLog('Connect executive failed', error, stackTrace);
-      _showToast('Failed to connect executive');
+      final message = error.toString();
+      if (message.contains('401')) {
+        _showToast('Session expired. Please login again.');
+        _logout();
+      } else {
+        _showToast('Failed to connect executive');
+      }
     } finally {
       _connectingAdmin = false;
       if (mounted) setState(() {});
@@ -328,7 +416,13 @@ class _CsnHomePageState extends State<CsnHomePage> {
       _history = history;
     } catch (error, stackTrace) {
       debugLog('Load admin dashboard failed', error, stackTrace);
-      _showToast('Failed to load admin dashboard');
+      final message = error.toString();
+      if (message.contains('401')) {
+        _showToast('Session expired. Please login again.');
+        _logout();
+      } else {
+        _showToast('Failed to load admin dashboard');
+      }
     } finally {
       _loadingAdminData = false;
       if (mounted) setState(() {});
@@ -420,26 +514,52 @@ class _CsnHomePageState extends State<CsnHomePage> {
   Future<void> _accept(AdminQueueItem item) async {
     final admin = _adminController;
     if (admin == null) return;
+    final resolvedRequestType = await _resolveRequestType(item);
     final roomId = await admin.accept(item.requestId);
     if (roomId == null) return;
     _activeRequestId = item.requestId;
+    Future<void> onEnded() async {
+      if (_activeRequestId != null) {
+        await admin.end(_activeRequestId!);
+        _activeRequestId = null;
+        final jwt = (_adminJwt ?? '').trim();
+        if (jwt.isNotEmpty) {
+          final api = CsnApiClient(baseUrl: _baseUrl, jwt: jwt);
+          _executiveHistory = await api.getExecutiveHistory(limit: 150);
+          api.close();
+        }
+      }
+    }
+    if (resolvedRequestType == CsnSupportRequestType.liveChat) {
+      await _openLiveChat(
+        jwt: (_adminJwt ?? '').trim(),
+        roomId: roomId,
+        localUserId: _currentUserId ?? 'executive',
+        onEnded: onEnded,
+      );
+      return;
+    }
     await _openCall(
       jwt: (_adminJwt ?? '').trim(),
       roomId: roomId,
       localUserId: _currentUserId ?? 'executive',
-      onEnded: () async {
-        if (_activeRequestId != null) {
-          await admin.end(_activeRequestId!);
-          _activeRequestId = null;
-          final jwt = (_adminJwt ?? '').trim();
-          if (jwt.isNotEmpty) {
-            final api = CsnApiClient(baseUrl: _baseUrl, jwt: jwt);
-            _executiveHistory = await api.getExecutiveHistory(limit: 150);
-            api.close();
-          }
-        }
-      },
+      onEnded: onEnded,
     );
+  }
+
+  Future<CsnSupportRequestType?> _resolveRequestType(AdminQueueItem item) async {
+    if (item.requestType != null) return item.requestType;
+    final jwt = (_adminJwt ?? '').trim();
+    if (jwt.isEmpty) return null;
+    try {
+      final api = CsnApiClient(baseUrl: _baseUrl, jwt: jwt);
+      final status = await api.getCallRequestStatus(item.requestId);
+      api.close();
+      return status.requestType;
+    } catch (error, stackTrace) {
+      debugLog('Resolve request type failed', error, stackTrace);
+      return null;
+    }
   }
 
   Future<void> _openCall({
@@ -473,10 +593,8 @@ class _CsnHomePageState extends State<CsnHomePage> {
         MaterialPageRoute<void>(
           builder: (_) => CsnCallScreen(
             controller: controller,
-            onEndCall: () async {
-              await controller.leave();
-              await onEnded();
-              if (mounted) Navigator.of(context).pop();
+            onEndCall: () {
+              unawaited(onEnded());
             },
           ),
         ),
@@ -485,6 +603,43 @@ class _CsnHomePageState extends State<CsnHomePage> {
     } catch (error, stackTrace) {
       debugLog('Open call failed', error, stackTrace);
       _showToast('Failed to start call');
+    } finally {
+      _joiningCall = false;
+    }
+  }
+
+  Future<void> _openLiveChat({
+    required String jwt,
+    required String roomId,
+    required String localUserId,
+    required Future<void> Function() onEnded,
+  }) async {
+    if (_joiningCall) return;
+    _joiningCall = true;
+    try {
+      final sdk = CsnSdk(
+        baseUrl: _baseUrl,
+        wsUrl: _normalizeWsUrl(_wsUrl),
+        jwt: jwt,
+      );
+      final controller = CsnLiveChatController(
+        signalingClient: sdk.signaling(),
+        localUserId: localUserId,
+        roomId: roomId,
+      );
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CsnLiveChatScreen(
+            controller: controller,
+            title: 'Support Chat',
+            onEndChat: onEnded,
+          ),
+        ),
+      );
+      controller.dispose();
+    } catch (error, stackTrace) {
+      debugLog('Open live chat failed', error, stackTrace);
+      _showToast('Failed to start live chat');
     } finally {
       _joiningCall = false;
     }
@@ -629,6 +784,7 @@ class _CsnHomePageState extends State<CsnHomePage> {
   }
 
   void _logout() {
+    unawaited(_clearSession());
     _adminController?.dispose();
     _adminController = null;
     setState(() {
@@ -735,7 +891,8 @@ class _CsnHomePageState extends State<CsnHomePage> {
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   subtitle: Text(
-                    'Pos ${item.position}  ETA ${item.etaSeconds}s',
+                    '${item.requestType == CsnSupportRequestType.liveChat ? 'Live Chat' : 'Video Call'}'
+                    ' | Pos ${item.position}  ETA ${item.etaSeconds}s',
                   ),
                   trailing: Wrap(
                     spacing: 8,
@@ -902,6 +1059,12 @@ class _CsnHomePageState extends State<CsnHomePage> {
   @override
   Widget build(BuildContext context) {
     final theme = CsnTheme.of(context);
+    if (!_sessionReady) {
+      return Scaffold(
+        backgroundColor: theme.background,
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
     if (!_authenticated) return _buildLoginPage(theme);
     if (_currentRole == _StaffRole.admin) return _buildAdminPage(theme);
     return _buildExecutivePage(theme);

@@ -240,6 +240,7 @@ class AdminQueueItem {
     required this.createdAt,
     required this.position,
     required this.etaSeconds,
+    this.requestType,
   });
 
   final String requestId;
@@ -247,6 +248,7 @@ class AdminQueueItem {
   final String createdAt;
   final int position;
   final int etaSeconds;
+  final CsnSupportRequestType? requestType;
 
   factory AdminQueueItem.fromJson(Map<String, dynamic> json) => AdminQueueItem(
         requestId: json['requestId'] as String,
@@ -254,6 +256,8 @@ class AdminQueueItem {
         createdAt: json['createdAt'] as String,
         position: json['position'] as int,
         etaSeconds: json['etaSeconds'] as int,
+        requestType:
+            CsnSupportRequestType.fromWireValue(json['requestType'] as String?),
       );
 }
 

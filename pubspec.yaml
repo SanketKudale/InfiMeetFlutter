@@ -1,5 +1,5 @@
 name: csn_flutter
-version: 0.2.0
+version: 0.3.1
 description: Flutter SDK for CSN realtime audio/video calling with prebuilt request-queue and call UI.
 repository:  https://github.com/SanketKudale/InfiMeetFlutter
 homepage:  https://github.com/SanketKudale/InfiMeetFlutter

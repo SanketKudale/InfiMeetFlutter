@@ -173,7 +173,7 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _Grid extends StatelessWidget {
+class _Grid extends StatefulWidget {
   const _Grid({
     required this.participants,
     required this.theme,
@@ -191,43 +191,79 @@ class _Grid extends StatelessWidget {
   final VoidCallback onToggleRemoteMirror;
 
   @override
+  State<_Grid> createState() => _GridState();
+}
+
+class _GridState extends State<_Grid> {
+  static const double _pipWidth = 110;
+  static const double _pipHeight = 165;
+  static const double _pipMargin = 12;
+  double? _pipLeft;
+  double? _pipTop;
+
+  @override
   Widget build(BuildContext context) {
-    if (participants.isEmpty) {
-      return _EmptyState(theme: theme);
+    if (widget.participants.isEmpty) {
+      return _EmptyState(theme: widget.theme);
     }
     CsnParticipant? local;
-    for (final p in participants) {
+    for (final p in widget.participants) {
       if (p.isLocal) {
         local = p;
         break;
       }
     }
-    final remotes = participants.where((p) => !p.isLocal).toList();
+    final remotes = widget.participants.where((p) => !p.isLocal).toList();
 
     if (remotes.isEmpty || local == null) {
-      return _ParticipantTile(participant: participants.first, theme: theme);
+      return _ParticipantTile(participant: widget.participants.first, theme: widget.theme);
     }
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: _ParticipantTile(
-            participant: remotes.first,
-            theme: theme,
-            remoteQuarterTurns: remoteQuarterTurns,
-            remoteMirror: remoteMirror,
-            onRotateRemote: onRotateRemote,
-            onToggleRemoteMirror: onToggleRemoteMirror,
-          ),
-        ),
-        Positioned(
-          right: 12,
-          bottom: 12,
-          width: 110,
-          height: 165,
-          child: _ParticipantTile(participant: local, theme: theme, pip: true),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxLeft = (constraints.maxWidth - _pipWidth).clamp(0.0, double.infinity);
+        final maxTop = (constraints.maxHeight - _pipHeight).clamp(0.0, double.infinity);
+        final defaultLeft = (maxLeft - _pipMargin).clamp(0.0, maxLeft);
+        final defaultTop = (maxTop - _pipMargin).clamp(0.0, maxTop);
+        final left = (_pipLeft ?? defaultLeft).clamp(0.0, maxLeft);
+        final top = (_pipTop ?? defaultTop).clamp(0.0, maxTop);
+
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: _ParticipantTile(
+                participant: remotes.first,
+                theme: widget.theme,
+                remoteQuarterTurns: widget.remoteQuarterTurns,
+                remoteMirror: widget.remoteMirror,
+                onRotateRemote: widget.onRotateRemote,
+                onToggleRemoteMirror: widget.onToggleRemoteMirror,
+              ),
+            ),
+            Positioned(
+              left: left,
+              top: top,
+              width: _pipWidth,
+              height: _pipHeight,
+              child: GestureDetector(
+                onPanUpdate: (details) {
+                  final nextLeft = (left + details.delta.dx).clamp(0.0, maxLeft);
+                  final nextTop = (top + details.delta.dy).clamp(0.0, maxTop);
+                  setState(() {
+                    _pipLeft = nextLeft;
+                    _pipTop = nextTop;
+                  });
+                },
+                child: _ParticipantTile(
+                  participant: local!,
+                  theme: widget.theme,
+                  pip: true,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -456,15 +492,6 @@ class _Controls extends StatelessWidget {
             label: controller.localVideoEnabled ? 'Video' : 'No Video',
             color: controller.localVideoEnabled ? theme.primary : theme.warning,
             onPressed: controller.toggleVideo,
-          ),
-          _ControlButton(
-            icon: controller.screenSharingEnabled
-                ? Icons.stop_screen_share
-                : Icons.screen_share,
-            label: controller.screenSharingEnabled ? 'Stop Share' : 'Share',
-            color:
-                controller.screenSharingEnabled ? theme.success : theme.accent,
-            onPressed: controller.toggleScreenShare,
           ),
           _ControlButton(
             icon: Icons.cameraswitch,

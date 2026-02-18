@@ -14,6 +14,8 @@ export 'src/ui/csn_call_controller.dart';
 export 'src/ui/csn_call_models.dart';
 export 'src/ui/csn_call_screen.dart';
 export 'src/ui/csn_basic_call_controller.dart';
+export 'src/ui/csn_live_chat_controller.dart';
+export 'src/ui/csn_live_chat_screen.dart';
 export 'src/ui/csn_request_mode_picker.dart';
 export 'src/ui/csn_request_controllers.dart';
 export 'src/utils/debug_log.dart';

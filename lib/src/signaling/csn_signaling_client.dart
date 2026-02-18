@@ -13,6 +13,7 @@ class CsnSignalingClient {
   final String wsUrl;
   final String? jwt;
   WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _channelSubscription;
   bool _closedManually = false;
   bool _connecting = false;
   int _reconnectAttempts = 0;
@@ -44,21 +45,23 @@ class CsnSignalingClient {
       _channel = IOWebSocketChannel.connect(uri);
       _reconnectAttempts = 0;
       _startKeepAlive();
-      _channel!.stream.listen(
+      _channelSubscription = _channel!.stream.listen(
         (data) {
           final jsonData = jsonDecode(data as String) as Map<String, dynamic>;
-          _controller.add(CsnSignalMessage.fromJson(jsonData));
+          _emit(CsnSignalMessage.fromJson(jsonData));
         },
         onError: (Object error, StackTrace stackTrace) {
           debugLog('Signaling socket error', error, stackTrace);
-          _controller.addError(error, stackTrace);
+          _emitError(error, stackTrace);
           _channel = null;
+          _channelSubscription = null;
           _stopKeepAlive();
           _scheduleReconnect();
         },
         onDone: () {
           debugLog('Signaling socket closed');
           _channel = null;
+          _channelSubscription = null;
           _stopKeepAlive();
           _scheduleReconnect();
         },
@@ -84,7 +87,7 @@ class CsnSignalingClient {
     } catch (error, stackTrace) {
       debugLog('Failed to send signaling message: ${message.type}', error,
           stackTrace);
-      _controller.addError(error, stackTrace);
+      _emitError(error, stackTrace);
     }
   }
 
@@ -148,8 +151,12 @@ class CsnSignalingClient {
       _closedManually = true;
       _reconnectTimer?.cancel();
       _stopKeepAlive();
+      await _channelSubscription?.cancel();
+      _channelSubscription = null;
       await _channel?.sink.close();
-      await _controller.close();
+      if (!_controller.isClosed) {
+        await _controller.close();
+      }
     } catch (error, stackTrace) {
       debugLog('Failed to close signaling client', error, stackTrace);
     } finally {
@@ -179,6 +186,16 @@ class CsnSignalingClient {
   void _stopKeepAlive() {
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
+  }
+
+  void _emit(CsnSignalMessage message) {
+    if (_controller.isClosed) return;
+    _controller.add(message);
+  }
+
+  void _emitError(Object error, StackTrace stackTrace) {
+    if (_controller.isClosed) return;
+    _controller.addError(error, stackTrace);
   }
 
   Uri _buildWsUri() {
