@@ -118,16 +118,13 @@ class _CsnHomePageState extends State<CsnHomePage> {
 
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _newExecutiveNameController = TextEditingController();
-  final _newExecutiveEmailController = TextEditingController();
-  final _newExecutivePasswordController = TextEditingController();
   _StaffRole _selectedRole = _StaffRole.executive;
   String? _loginError;
   bool _authenticated = false;
   bool _sessionReady = false;
   bool _loadingLogin = false;
   bool _loadingAdminData = false;
-  bool _creatingExecutive = false;
+  bool _changingAdminPassword = false;
 
   final _notifications = FlutterLocalNotificationsPlugin();
   final Set<String> _seenQueueIds = <String>{};
@@ -248,9 +245,6 @@ class _CsnHomePageState extends State<CsnHomePage> {
     }
     _emailController.dispose();
     _passwordController.dispose();
-    _newExecutiveNameController.dispose();
-    _newExecutiveEmailController.dispose();
-    _newExecutivePasswordController.dispose();
     _adminController?.dispose();
     super.dispose();
   }
@@ -429,35 +423,96 @@ class _CsnHomePageState extends State<CsnHomePage> {
     }
   }
 
-  Future<void> _createExecutive() async {
-    if (_creatingExecutive) return;
+  Future<void> _openExecutiveManagementPage() async {
     final jwt = (_adminJwt ?? '').trim();
     if (jwt.isEmpty) return;
-    final name = _newExecutiveNameController.text.trim();
-    final email = _newExecutiveEmailController.text.trim();
-    final password = _newExecutivePasswordController.text;
-    if (name.isEmpty || email.isEmpty || password.isEmpty) {
-      _showToast('Name, email and password are required');
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ExecutiveManagementPage(
+          baseUrl: _baseUrl,
+          jwt: jwt,
+        ),
+      ),
+    );
+    await _loadAdminDashboard();
+  }
+
+  Future<void> _changeOwnAdminPassword() async {
+    if (_changingAdminPassword) return;
+    final jwt = (_adminJwt ?? '').trim();
+    if (jwt.isEmpty) return;
+    final values = await _showChangePasswordDialog();
+    if (values == null) return;
+    final currentPassword = values.$1.trim();
+    final newPassword = values.$2.trim();
+    if (currentPassword.isEmpty || newPassword.isEmpty) {
+      _showToast('Current and new password are required');
       return;
     }
-
-    _creatingExecutive = true;
-    setState(() {});
+    _changingAdminPassword = true;
+    if (mounted) setState(() {});
     try {
       final api = CsnApiClient(baseUrl: _baseUrl, jwt: jwt);
-      await api.createExecutive(name: name, email: email, password: password);
+      await api.changeAdminPassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
       api.close();
-      _newExecutiveNameController.clear();
-      _newExecutiveEmailController.clear();
-      _newExecutivePasswordController.clear();
-      await _loadAdminDashboard();
-      _showToast('Executive created');
+      _showToast('Password changed successfully');
     } catch (error, stackTrace) {
-      debugLog('Create executive failed', error, stackTrace);
-      _showToast('Failed to create executive');
+      debugLog('Change admin password failed', error, stackTrace);
+      _showToast('Failed to change password');
     } finally {
-      _creatingExecutive = false;
+      _changingAdminPassword = false;
       if (mounted) setState(() {});
+    }
+  }
+
+  Future<(String, String)?> _showChangePasswordDialog() async {
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    try {
+      return showDialog<(String, String)>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Change My Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: currentController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Current password',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: newController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'New password',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(
+                (currentController.text, newController.text),
+              ),
+              child: const Text('Change'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      currentController.dispose();
+      newController.dispose();
     }
   }
 
@@ -938,6 +993,13 @@ class _CsnHomePageState extends State<CsnHomePage> {
         title: const Text('Admin Dashboard'),
         actions: [
           IconButton(
+            tooltip: 'Change Password',
+            onPressed: _changingAdminPassword
+                ? null
+                : () => unawaited(_changeOwnAdminPassword()),
+            icon: const Icon(Icons.password),
+          ),
+          IconButton(
             tooltip: 'Refresh',
             onPressed: _loadingAdminData ? null : _loadAdminDashboard,
             icon: const Icon(Icons.refresh),
@@ -984,54 +1046,23 @@ class _CsnHomePageState extends State<CsnHomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Add Executive',
+                    'Executive Management',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _newExecutiveNameController,
-                    decoration: const InputDecoration(labelText: 'Name'),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Open dedicated page to add, activate/deactivate, reset password and delete executives.',
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _newExecutiveEmailController,
-                    decoration: const InputDecoration(labelText: 'Email'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _newExecutivePasswordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password'),
-                  ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   ElevatedButton.icon(
-                    onPressed: _creatingExecutive
-                        ? null
-                        : () => unawaited(_createExecutive()),
-                    icon: const Icon(Icons.person_add_alt_1),
-                    label: Text(_creatingExecutive
-                        ? 'Creating...'
-                        : 'Create Executive'),
+                    onPressed: _openExecutiveManagementPage,
+                    icon: const Icon(Icons.manage_accounts),
+                    label: const Text('Manage Executives'),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'Executives',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-          ),
-          const SizedBox(height: 8),
-          for (final executive in _executives)
-            Card(
-              color: const Color(0xFF141C2E),
-              child: ListTile(
-                title: Text(executive.name),
-                subtitle: Text(executive.email),
-                trailing: Text(executive.isActive ? 'Active' : 'Inactive'),
-              ),
-            ),
           const SizedBox(height: 16),
           const Text(
             'Call History',
@@ -1068,6 +1099,359 @@ class _CsnHomePageState extends State<CsnHomePage> {
     if (!_authenticated) return _buildLoginPage(theme);
     if (_currentRole == _StaffRole.admin) return _buildAdminPage(theme);
     return _buildExecutivePage(theme);
+  }
+}
+
+class ExecutiveManagementPage extends StatefulWidget {
+  const ExecutiveManagementPage({
+    super.key,
+    required this.baseUrl,
+    required this.jwt,
+  });
+
+  final String baseUrl;
+  final String jwt;
+
+  @override
+  State<ExecutiveManagementPage> createState() => _ExecutiveManagementPageState();
+}
+
+class _ExecutiveManagementPageState extends State<ExecutiveManagementPage> {
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final Set<String> _updatingExecutiveIds = <String>{};
+  final Set<String> _deletingExecutiveIds = <String>{};
+  final Set<String> _resettingExecutiveIds = <String>{};
+  bool _loading = false;
+  bool _creating = false;
+  List<AuthUserProfile> _executives = [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadExecutives());
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadExecutives() async {
+    _loading = true;
+    if (mounted) setState(() {});
+    try {
+      final api = CsnApiClient(baseUrl: widget.baseUrl, jwt: widget.jwt);
+      _executives = await api.listExecutives();
+      api.close();
+    } catch (error, stackTrace) {
+      debugLog('Load executives failed', error, stackTrace);
+      _showToast('Failed to load executives');
+    } finally {
+      _loading = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _createExecutive() async {
+    if (_creating) return;
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+      _showToast('Name, email and password are required');
+      return;
+    }
+    _creating = true;
+    if (mounted) setState(() {});
+    try {
+      final api = CsnApiClient(baseUrl: widget.baseUrl, jwt: widget.jwt);
+      await api.createExecutive(name: name, email: email, password: password);
+      api.close();
+      _nameController.clear();
+      _emailController.clear();
+      _passwordController.clear();
+      await _loadExecutives();
+      _showToast('Executive created');
+    } catch (error, stackTrace) {
+      debugLog('Create executive failed', error, stackTrace);
+      _showToast('Failed to create executive');
+    } finally {
+      _creating = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _toggleExecutiveActive(AuthUserProfile executive) async {
+    if (_updatingExecutiveIds.contains(executive.id)) return;
+    _updatingExecutiveIds.add(executive.id);
+    if (mounted) setState(() {});
+    try {
+      final api = CsnApiClient(baseUrl: widget.baseUrl, jwt: widget.jwt);
+      await api.updateExecutiveActive(
+        executiveId: executive.id,
+        isActive: !executive.isActive,
+      );
+      api.close();
+      await _loadExecutives();
+    } catch (error, stackTrace) {
+      debugLog('Toggle executive active failed', error, stackTrace);
+      _showToast('Failed to update executive status');
+    } finally {
+      _updatingExecutiveIds.remove(executive.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _resetExecutivePassword(AuthUserProfile executive) async {
+    if (_resettingExecutiveIds.contains(executive.id)) return;
+    final password = await _showPasswordPrompt(
+      title: 'Reset Password',
+      hint: 'New password for ${executive.name}',
+      actionLabel: 'Reset',
+    );
+    if (password == null || password.trim().isEmpty) return;
+    _resettingExecutiveIds.add(executive.id);
+    if (mounted) setState(() {});
+    try {
+      final api = CsnApiClient(baseUrl: widget.baseUrl, jwt: widget.jwt);
+      await api.resetExecutivePassword(
+        executiveId: executive.id,
+        password: password.trim(),
+      );
+      api.close();
+      _showToast('Password reset for ${executive.name}');
+    } catch (error, stackTrace) {
+      debugLog('Reset executive password failed', error, stackTrace);
+      _showToast('Failed to reset password');
+    } finally {
+      _resettingExecutiveIds.remove(executive.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _deleteExecutive(AuthUserProfile executive) async {
+    if (_deletingExecutiveIds.contains(executive.id)) return;
+    final confirmed = await _showConfirmDialog(
+      title: 'Delete Executive',
+      message:
+          'Delete ${executive.name}? This removes executive login access immediately.',
+      actionLabel: 'Delete',
+    );
+    if (!confirmed) return;
+    _deletingExecutiveIds.add(executive.id);
+    if (mounted) setState(() {});
+    try {
+      final api = CsnApiClient(baseUrl: widget.baseUrl, jwt: widget.jwt);
+      await api.deleteExecutive(executiveId: executive.id);
+      api.close();
+      await _loadExecutives();
+      _showToast('Executive deleted');
+    } catch (error, stackTrace) {
+      debugLog('Delete executive failed', error, stackTrace);
+      _showToast('Failed to delete executive');
+    } finally {
+      _deletingExecutiveIds.remove(executive.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<String?> _showPasswordPrompt({
+    required String title,
+    required String hint,
+    required String actionLabel,
+  }) async {
+    final controller = TextEditingController();
+    try {
+      return showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            decoration: InputDecoration(hintText: hint),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<bool> _showConfirmDialog({
+    required String title,
+    required String message,
+    required String actionLabel,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(actionLabel),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  void _showToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Manage Executives'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _loading ? null : _loadExecutives,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            color: const Color(0xFF141C2E),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Add Executive',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _nameController,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _emailController,
+                    decoration: const InputDecoration(labelText: 'Email'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton.icon(
+                    onPressed:
+                        _creating ? null : () => unawaited(_createExecutive()),
+                    icon: const Icon(Icons.person_add_alt_1),
+                    label: Text(_creating ? 'Creating...' : 'Create Executive'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Executives',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          if (_loading) const LinearProgressIndicator(),
+          for (final executive in _executives)
+            Card(
+              color: const Color(0xFF141C2E),
+              margin: const EdgeInsets.only(bottom: 10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      executive.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      executive.email,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      executive.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Color(0xFF9FB0C9)),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Switch(
+                          value: executive.isActive,
+                          activeThumbColor: Colors.white,
+                          activeTrackColor: Colors.green,
+                          inactiveTrackColor: Colors.grey.shade700,
+                          onChanged: _updatingExecutiveIds.contains(executive.id)
+                              ? null
+                              : (_) => unawaited(_toggleExecutiveActive(executive)),
+                        ),
+                        IconButton(
+                          tooltip: 'Reset password',
+                          onPressed: _resettingExecutiveIds.contains(executive.id)
+                              ? null
+                              : () => unawaited(_resetExecutivePassword(executive)),
+                          icon: const Icon(Icons.password),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete executive',
+                          onPressed: _deletingExecutiveIds.contains(executive.id)
+                              ? null
+                              : () => unawaited(_deleteExecutive(executive)),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

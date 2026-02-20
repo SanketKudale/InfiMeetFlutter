@@ -413,6 +413,23 @@ class CsnApiClient {
     );
   }
 
+  Future<AuthUserProfile> changeAdminPassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final response = await _client.post(
+      _uri('/auth/admin/change-password'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      }),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return AuthUserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
   Future<List<AuthUserProfile>> listExecutives() async {
     final response = await _client.get(
       _uri('/admin/executives'),
@@ -443,6 +460,42 @@ class CsnApiClient {
     _ensureOk(response);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     return AuthUserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
+  Future<AuthUserProfile> updateExecutiveActive({
+    required String executiveId,
+    required bool isActive,
+  }) async {
+    final response = await _client.patch(
+      _uri('/admin/executives/$executiveId'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'isActive': isActive}),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return AuthUserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
+  Future<AuthUserProfile> resetExecutivePassword({
+    required String executiveId,
+    required String password,
+  }) async {
+    final response = await _client.post(
+      _uri('/admin/executives/$executiveId/reset-password'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'password': password}),
+    );
+    _ensureOk(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return AuthUserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
+  Future<void> deleteExecutive({required String executiveId}) async {
+    final response = await _client.delete(
+      _uri('/admin/executives/$executiveId'),
+      headers: _headers(),
+    );
+    _ensureOk(response);
   }
 
   Future<List<StaffHistoryItem>> getAdminHistory({int limit = 200}) async {
