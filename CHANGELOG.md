@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2
+
+- Added complete executive management from admin:
+  - create executive
+  - activate/deactivate executive
+  - reset executive password
+  - delete executive
+- Added admin self password change flow.
+- Added dedicated `Manage Executives` page in the example app with cleaner row layout and one-line action controls.
+- Improved call stability by avoiding immediate teardown on transient peer-connection failure and adding recovery offer flow.
+- Hardened media/dialog cleanup paths to prevent disposed-controller and disposed-track runtime exceptions.
+
 ## 0.3.1
 
 - Updated video call UI: local user PiP tile is now draggable and can be positioned anywhere on screen during an active call.

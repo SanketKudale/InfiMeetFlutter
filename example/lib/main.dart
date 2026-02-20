@@ -469,51 +469,47 @@ class _CsnHomePageState extends State<CsnHomePage> {
   }
 
   Future<(String, String)?> _showChangePasswordDialog() async {
-    final currentController = TextEditingController();
-    final newController = TextEditingController();
-    try {
-      return showDialog<(String, String)>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Change My Password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: currentController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Current password',
-                ),
+    var currentPassword = '';
+    var newPassword = '';
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Change My Password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Current password',
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: newController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'New password',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              onChanged: (value) => currentPassword = value,
             ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(
-                (currentController.text, newController.text),
+            const SizedBox(height: 10),
+            TextField(
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'New password',
               ),
-              child: const Text('Change'),
+              onChanged: (value) => newPassword = value,
             ),
           ],
         ),
-      );
-    } finally {
-      currentController.dispose();
-      newController.dispose();
-    }
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(
+              (currentPassword, newPassword),
+            ),
+            child: const Text('Change'),
+          ),
+        ],
+      ),
+    );
+    return result;
   }
 
   Future<void> _onAdminUpdate() async {
@@ -1265,33 +1261,30 @@ class _ExecutiveManagementPageState extends State<ExecutiveManagementPage> {
     required String hint,
     required String actionLabel,
   }) async {
-    final controller = TextEditingController();
-    try {
-      return showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            obscureText: true,
-            decoration: InputDecoration(hintText: hint),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
-              child: Text(actionLabel),
-            ),
-          ],
+    var value = '';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          autofocus: true,
+          obscureText: true,
+          decoration: InputDecoration(hintText: hint),
+          onChanged: (text) => value = text,
         ),
-      );
-    } finally {
-      controller.dispose();
-    }
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(value),
+            child: Text(actionLabel),
+          ),
+        ],
+      ),
+    );
+    return result;
   }
 
   Future<bool> _showConfirmDialog({
