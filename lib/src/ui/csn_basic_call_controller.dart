@@ -40,7 +40,8 @@ class CsnBasicCallController extends CsnCallController {
   bool _handlingOffer = false;
   bool _negotiating = false;
   bool _renegotiatePending = false;
-  bool _endingFromPeerState = false;
+  Timer? _disconnectEndTimer;
+  bool _recoveringConnection = false;
 
   String _trackInfo(MediaStreamTrack? track) {
     if (track == null) return 'null';
@@ -119,6 +120,9 @@ class CsnBasicCallController extends CsnCallController {
 
   @override
   Future<void> leave() async {
+    _disconnectEndTimer?.cancel();
+    _disconnectEndTimer = null;
+    _ssLog('leave() called');
     try {
       signalingClient.leaveRoom();
     } catch (_) {
@@ -360,29 +364,66 @@ class CsnBasicCallController extends CsnCallController {
 
     pc.onConnectionState = (state) {
       debugLog('Peer connection state', state.toString());
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+      _ssLog('pc connectionState=$state');
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        if (_disconnectEndTimer != null) {
+          _ssLog('cancel disconnect end timer (recovered to connected)');
+        }
+        _disconnectEndTimer?.cancel();
+        _disconnectEndTimer = null;
+        return;
+      }
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
-        unawaited(_endCallFromPeerState(state));
+        _disconnectEndTimer?.cancel();
+        _ssLog('start connection-failure grace timer (8s), state=$state');
+        _disconnectEndTimer = Timer(const Duration(seconds: 8), () {
+          final current = _peerConnection?.connectionState;
+          _ssLog(
+              'connection-failure grace timer elapsed, currentState=$current');
+          if (_connectionState == CsnCallConnectionState.ended) {
+            return;
+          }
+          if (current == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+            return;
+          }
+          unawaited(
+            _attemptConnectionRecovery(
+              current ?? RTCPeerConnectionState.RTCPeerConnectionStateFailed,
+            ),
+          );
+        });
+        return;
       }
     };
   }
 
-  Future<void> _endCallFromPeerState(RTCPeerConnectionState state) async {
-    if (_endingFromPeerState) return;
+  Future<void> _attemptConnectionRecovery(
+      RTCPeerConnectionState state) async {
+    if (_recoveringConnection) return;
     if (_connectionState == CsnCallConnectionState.ended) return;
-    _endingFromPeerState = true;
+    final target = _remoteUserId;
+    if (target == null || target.isEmpty) return;
+    _recoveringConnection = true;
     try {
-      debugLog('Call ended from peer state', state.toString());
-      await leave();
+      _ssLog('attempt connection recovery state=$state target=$target');
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+        await _disposePeerConnection();
+        await _ensurePeerConnection();
+      } else {
+        await _ensurePeerConnection();
+      }
+      await _createAndSendOffer(iceRestart: true);
+      _ssLog('connection recovery offer sent');
     } catch (error, stackTrace) {
-      _failWithError('Peer connection closed', error, stackTrace);
+      _ssLog('connection recovery failed', error, stackTrace);
     } finally {
-      _endingFromPeerState = false;
+      _recoveringConnection = false;
     }
   }
 
-  Future<void> _createAndSendOffer() async {
+  Future<void> _createAndSendOffer({bool iceRestart = false}) async {
     if (_makingOffer) return;
     final target = _remoteUserId;
     if (target == null) return;
@@ -396,9 +437,12 @@ class CsnBasicCallController extends CsnCallController {
     }
     _makingOffer = true;
     try {
-      final offer = await pc.createOffer({});
+      final offer = await pc.createOffer(
+        iceRestart ? {'iceRestart': true} : {},
+      );
       await pc.setLocalDescription(offer);
-      _ssLog('createAndSendOffer setLocalDescription success');
+      _ssLog(
+          'createAndSendOffer setLocalDescription success iceRestart=$iceRestart');
       signalingClient.send(CsnSignalMessage('offer', {
         'targetUserId': target,
         'payload': {
@@ -452,6 +496,7 @@ class CsnBasicCallController extends CsnCallController {
       if (userId != null) {
         await _removeParticipant(userId);
       }
+      _ssLog('signal peer-left userId=$userId');
       _remoteUserId = null;
       await _disposePeerConnection();
       _connectionState = CsnCallConnectionState.ended;
@@ -462,6 +507,7 @@ class CsnBasicCallController extends CsnCallController {
     if (message.type == 'request-updated') {
       final status = message.payload?['status']?.toString();
       final roomId = message.payload?['roomId']?.toString();
+      _ssLog('signal request-updated status=$status roomId=$roomId');
       if ((status == 'ended' || status == 'declined') &&
           (roomId == null || roomId == _roomId)) {
         await leave();
@@ -829,9 +875,9 @@ class CsnBasicCallController extends CsnCallController {
   Future<void> _applyScreenTrackConstraints(MediaStreamTrack track) async {
     try {
       await track.applyConstraints({
-        'width': {'ideal': 540, 'max': 720},
-        'height': {'ideal': 960, 'max': 1280},
-        'frameRate': {'ideal': 10, 'max': 12},
+        'width': {'ideal': 480, 'max': 720},
+        'height': {'ideal': 854, 'max': 1280},
+        'frameRate': {'ideal': 8, 'max': 12},
       });
       _ssLog('applied screen track constraints to ${track.id}');
     } catch (error, stackTrace) {
@@ -850,8 +896,8 @@ class CsnBasicCallController extends CsnCallController {
         return;
       }
       for (final encoding in encodings) {
-        encoding.maxBitrate = 400000;
-        encoding.maxFramerate = 10;
+        encoding.maxBitrate = 300000;
+        encoding.maxFramerate = 8;
         if ((encoding.scaleResolutionDownBy ?? 1.0) < 2.0) {
           encoding.scaleResolutionDownBy = 2.0;
         }
@@ -1075,6 +1121,48 @@ class CsnBasicCallController extends CsnCallController {
     }
   }
 
+  Future<void> _safeDisposeStream(MediaStream? stream, {String? label}) async {
+    if (stream == null) return;
+    try {
+      for (final track in List<MediaStreamTrack>.from(stream.getTracks())) {
+        try {
+          track.stop();
+        } catch (_) {
+          // no-op
+        }
+        try {
+          stream.removeTrack(track);
+        } catch (_) {
+          // no-op
+        }
+      }
+      await stream.dispose();
+    } catch (error, stackTrace) {
+      _ssLog('safeDisposeStream failed (${label ?? 'stream'})', error, stackTrace);
+    }
+  }
+
+  Future<void> _safeDisposeRenderer(
+    RTCVideoRenderer? renderer, {
+    String? label,
+  }) async {
+    if (renderer == null) return;
+    try {
+      renderer.srcObject = null;
+    } catch (_) {
+      // no-op
+    }
+    try {
+      await renderer.dispose();
+    } catch (error, stackTrace) {
+      _ssLog(
+        'safeDisposeRenderer failed (${label ?? 'renderer'})',
+        error,
+        stackTrace,
+      );
+    }
+  }
+
   Future<void> _safeRenegotiate() async {
     if (_negotiating) return;
     if (_remoteUserId == null) return;
@@ -1144,6 +1232,8 @@ class CsnBasicCallController extends CsnCallController {
 
   @override
   void dispose() {
+    _disconnectEndTimer?.cancel();
+    _disconnectEndTimer = null;
     _joinTimeout?.cancel();
     unawaited(_sub?.cancel());
     unawaited(_disposePeerConnection());
@@ -1155,7 +1245,7 @@ class CsnBasicCallController extends CsnCallController {
       for (final track in screen.getTracks()) {
         track.stop();
       }
-      unawaited(screen.dispose());
+      unawaited(_safeDisposeStream(screen, label: 'dispose.screen'));
       if (WebRTC.platformIsAndroid) {
         unawaited(CsnMediaProjectionBridge.stopForegroundService());
       }
@@ -1165,16 +1255,19 @@ class CsnBasicCallController extends CsnCallController {
       for (final track in stream.getTracks()) {
         track.stop();
       }
-      unawaited(stream.dispose());
+      unawaited(_safeDisposeStream(stream, label: 'dispose.local'));
     }
     for (final participant in _participants) {
-      final renderer = participant.renderer;
-      if (renderer != null) {
-        unawaited(renderer.dispose());
-      }
+      unawaited(_safeDisposeRenderer(
+        participant.renderer,
+        label: 'dispose.participant_renderer',
+      ));
     }
     for (final stream in _remoteSyntheticStreams.values) {
-      unawaited(stream.dispose());
+      unawaited(_safeDisposeStream(
+        stream,
+        label: 'dispose.remote_synthetic',
+      ));
     }
     _remoteSyntheticStreams.clear();
     unawaited(signalingClient.close());
