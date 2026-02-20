@@ -494,6 +494,15 @@ class _Controls extends StatelessWidget {
             onPressed: controller.toggleVideo,
           ),
           _ControlButton(
+            icon: controller.screenSharingEnabled
+                ? Icons.stop_screen_share
+                : Icons.screen_share,
+            label: controller.screenSharingEnabled ? 'Stop Share' : 'Share',
+            color:
+                controller.screenSharingEnabled ? theme.success : theme.accent,
+            onPressed: controller.toggleScreenShare,
+          ),
+          _ControlButton(
             icon: Icons.cameraswitch,
             label: 'Switch',
             color: theme.accent,

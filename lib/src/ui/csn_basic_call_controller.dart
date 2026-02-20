@@ -39,7 +39,21 @@ class CsnBasicCallController extends CsnCallController {
   bool _makingOffer = false;
   bool _handlingOffer = false;
   bool _negotiating = false;
+  bool _renegotiatePending = false;
   bool _endingFromPeerState = false;
+
+  String _trackInfo(MediaStreamTrack? track) {
+    if (track == null) return 'null';
+    return 'kind=${track.kind},id=${track.id},enabled=${track.enabled}';
+  }
+
+  void _ssLog(String message, [Object? error, StackTrace? stackTrace]) {
+    debugLog(
+      '[CSN_SS][$localUserId][room=$_roomId] $message',
+      error,
+      stackTrace,
+    );
+  }
 
   @override
   CsnCallUiState get state => CsnCallUiState(
@@ -153,14 +167,17 @@ class CsnBasicCallController extends CsnCallController {
   @override
   Future<void> toggleScreenShare() async {
     if (_screenSharingEnabled) {
+      _ssLog('toggleScreenShare stop requested');
       await _stopScreenShare();
       notifyListeners();
       return;
     }
 
+    _ssLog('toggleScreenShare start requested');
     try {
       if (WebRTC.platformIsAndroid) {
         final granted = await Helper.requestCapturePermission();
+        _ssLog('capture permission granted=$granted');
         if (!granted) {
           _failWithError('Screen capture permission denied', null, null);
           return;
@@ -172,10 +189,14 @@ class CsnBasicCallController extends CsnCallController {
       final displayStream = await _getDisplayStreamWithAndroidRetry();
       final tracks = displayStream.getVideoTracks();
       if (tracks.isEmpty) {
+        _ssLog('display stream has no video tracks');
         await displayStream.dispose();
         return;
       }
       final screenTrack = tracks.first;
+      _ssLog(
+          'display stream id=${displayStream.id} screenTrack=${_trackInfo(screenTrack)}');
+      await _applyScreenTrackConstraints(screenTrack);
       _screenStream = displayStream;
       _screenSharingEnabled = true;
       _localVideoEnabled = true;
@@ -184,6 +205,8 @@ class CsnBasicCallController extends CsnCallController {
         track: screenTrack,
         stream: displayStream,
       );
+      await _applyVideoSenderEncodingForScreenShare();
+      _ssLog('screen track switched, starting renegotiation');
       await _safeRenegotiate();
 
       final local = _ensureLocalParticipant();
@@ -191,6 +214,7 @@ class CsnBasicCallController extends CsnCallController {
       local.renderer!.srcObject = displayStream;
       local.videoEnabled = true;
       _sendLocalMediaState();
+      _ssLog('screen share start complete');
       notifyListeners();
     } catch (error, stackTrace) {
       if (WebRTC.platformIsAndroid) {
@@ -204,7 +228,11 @@ class CsnBasicCallController extends CsnCallController {
     Future<MediaStream> capture() {
       return navigator.mediaDevices.getDisplayMedia({
         'audio': false,
-        'video': true,
+        'video': {
+          'frameRate': {'ideal': 12, 'max': 15},
+          'width': {'ideal': 720, 'max': 1280},
+          'height': {'ideal': 1280, 'max': 1920},
+        },
       });
     }
 
@@ -301,20 +329,25 @@ class CsnBasicCallController extends CsnCallController {
       }));
     };
 
+    pc.onSignalingState = (state) {
+      _ssLog('pc signalingState=$state pending=$_renegotiatePending');
+      if (state == RTCSignalingState.RTCSignalingStateStable &&
+          _renegotiatePending) {
+        unawaited(_triggerPendingRenegotiationIfPossible());
+      }
+    };
+
     pc.onTrack = (event) async {
+      _ssLog(
+        'pc onTrack kind=${event.track.kind} id=${event.track.id} enabled=${event.track.enabled} streams=${event.streams.length}',
+      );
       final remoteUserId = _remoteUserId ?? 'remote';
       final remote = _ensureRemoteParticipant(remoteUserId);
-      MediaStream stream;
-      if (event.streams.isNotEmpty) {
-        stream = event.streams.first;
-      } else {
-        stream = await _ensureRemoteSyntheticStream(remoteUserId);
-        final alreadyAdded =
-            stream.getTracks().any((track) => track.id == event.track.id);
-        if (!alreadyAdded) {
-          stream.addTrack(event.track);
-        }
-      }
+      final stream = await _ensureRemoteSyntheticStream(remoteUserId);
+      _upsertRemoteTrackInSyntheticStream(stream, event.track);
+      _ssLog(
+        'remote synthetic user=$remoteUserId stream=${stream.id} tracks=${stream.getTracks().map((t) => '${t.kind}:${t.id}').join(',')}',
+      );
       remote.renderer ??= await _createRenderer();
       remote.renderer!.srcObject = stream;
       if (event.track.kind == 'audio') {
@@ -356,10 +389,16 @@ class CsnBasicCallController extends CsnCallController {
     await _ensurePeerConnection();
     final pc = _peerConnection;
     if (pc == null) return;
+    if (!_canCreateOfferNow(pc)) {
+      _renegotiatePending = true;
+      _ssLog('createAndSendOffer deferred signalingState=${pc.signalingState}');
+      return;
+    }
     _makingOffer = true;
     try {
       final offer = await pc.createOffer({});
       await pc.setLocalDescription(offer);
+      _ssLog('createAndSendOffer setLocalDescription success');
       signalingClient.send(CsnSignalMessage('offer', {
         'targetUserId': target,
         'payload': {
@@ -384,6 +423,7 @@ class CsnBasicCallController extends CsnCallController {
       final remotes = room.peers.where((id) => id != localUserId).toList();
       if (remotes.isNotEmpty) {
         _remoteUserId = remotes.first;
+        _ssLog('room-state set remoteUserId=$_remoteUserId');
         final shouldOffer = localUserId.compareTo(_remoteUserId!) < 0;
         if (shouldOffer) {
           await _createAndSendOffer();
@@ -396,6 +436,7 @@ class CsnBasicCallController extends CsnCallController {
       final userId = message.payload?['userId'] as String?;
       if (userId == null || userId == localUserId) return;
       _remoteUserId = userId;
+      _ssLog('peer-joined set remoteUserId=$_remoteUserId');
       _ensureRemoteParticipant(userId);
       notifyListeners();
       _sendLocalMediaState();
@@ -433,6 +474,7 @@ class CsnBasicCallController extends CsnCallController {
       final payload = message.payload?['payload'] as Map<String, dynamic>?;
       if (from == null || payload == null) return;
       _remoteUserId = from;
+      _ssLog('received offer from=$from');
       _ensureRemoteParticipant(from);
       await _ensurePeerConnection();
       final pc = _peerConnection;
@@ -448,6 +490,7 @@ class CsnBasicCallController extends CsnCallController {
         );
         final answer = await pc.createAnswer({});
         await pc.setLocalDescription(answer);
+        _ssLog('answer setLocalDescription success target=$from');
         signalingClient.send(CsnSignalMessage('answer', {
           'targetUserId': from,
           'payload': {
@@ -457,6 +500,7 @@ class CsnBasicCallController extends CsnCallController {
         }));
       } finally {
         _handlingOffer = false;
+        unawaited(_triggerPendingRenegotiationIfPossible());
       }
       return;
     }
@@ -628,6 +672,24 @@ class CsnBasicCallController extends CsnCallController {
     return created;
   }
 
+  void _upsertRemoteTrackInSyntheticStream(
+    MediaStream stream,
+    MediaStreamTrack incomingTrack,
+  ) {
+    final sameKindTracks = incomingTrack.kind == 'audio'
+        ? List<MediaStreamTrack>.from(stream.getAudioTracks())
+        : List<MediaStreamTrack>.from(stream.getVideoTracks());
+    for (final existingTrack in sameKindTracks) {
+      if (existingTrack.id == incomingTrack.id) continue;
+      stream.removeTrack(existingTrack);
+    }
+    final alreadyAdded =
+        stream.getTracks().any((track) => track.id == incomingTrack.id);
+    if (!alreadyAdded) {
+      stream.addTrack(incomingTrack);
+    }
+  }
+
   Future<void> _disposePeerConnection() async {
     final pc = _peerConnection;
     _peerConnection = null;
@@ -734,23 +796,74 @@ class CsnBasicCallController extends CsnCallController {
     return true;
   }
 
-  Future<void> _switchOutgoingVideoTrack({
+  Future<bool> _switchOutgoingVideoTrack({
     required MediaStreamTrack track,
     required MediaStream stream,
   }) async {
     final pc = _peerConnection;
-    if (pc == null) return;
-    final oldSender = _videoSender;
-    if (oldSender != null) {
-      try {
-        await pc.removeTrack(oldSender);
-      } catch (_) {
-        // no-op
-      }
-      _videoSender = null;
+    if (pc == null) return false;
+    final existing = _videoSender;
+    if (existing != null) {
+      _ssLog(
+          'switchOutgoingVideoTrack existing sender old=${_trackInfo(existing.track)} new=${_trackInfo(track)}');
+      await existing.replaceTrack(track);
+      return false;
     }
+    final senders = await pc.getSenders();
+    for (final sender in senders) {
+      if (sender.track?.kind == 'video') {
+        _ssLog(
+            'switchOutgoingVideoTrack discovered sender old=${_trackInfo(sender.track)} new=${_trackInfo(track)}');
+        await sender.replaceTrack(track);
+        _videoSender = sender;
+        return false;
+      }
+    }
+    _ssLog(
+        'switchOutgoingVideoTrack addTrack new=${_trackInfo(track)} stream=${stream.id}');
     final sender = await pc.addTrack(track, stream);
     _videoSender = sender;
+    return true;
+  }
+
+  Future<void> _applyScreenTrackConstraints(MediaStreamTrack track) async {
+    try {
+      await track.applyConstraints({
+        'width': {'ideal': 540, 'max': 720},
+        'height': {'ideal': 960, 'max': 1280},
+        'frameRate': {'ideal': 10, 'max': 12},
+      });
+      _ssLog('applied screen track constraints to ${track.id}');
+    } catch (error, stackTrace) {
+      _ssLog('failed to apply screen track constraints', error, stackTrace);
+    }
+  }
+
+  Future<void> _applyVideoSenderEncodingForScreenShare() async {
+    final sender = _videoSender;
+    if (sender == null) return;
+    try {
+      final params = sender.parameters;
+      final encodings = params.encodings;
+      if (encodings == null || encodings.isEmpty) {
+        _ssLog('video sender has no encodings to tune for screen share');
+        return;
+      }
+      for (final encoding in encodings) {
+        encoding.maxBitrate = 400000;
+        encoding.maxFramerate = 10;
+        if ((encoding.scaleResolutionDownBy ?? 1.0) < 2.0) {
+          encoding.scaleResolutionDownBy = 2.0;
+        }
+        encoding.numTemporalLayers = 1;
+      }
+      params.encodings = encodings;
+      final ok = await sender.setParameters(params);
+      _ssLog(
+          'video sender tuned for screen share ok=$ok encodings=${encodings.length}');
+    } catch (error, stackTrace) {
+      _ssLog('failed to tune video sender for screen share', error, stackTrace);
+    }
   }
 
   Future<void> _setLocalAudioEnabled(bool enabled) async {
@@ -825,6 +938,7 @@ class CsnBasicCallController extends CsnCallController {
   }
 
   Future<void> _stopScreenShare() async {
+    _ssLog('stopScreenShare start');
     final screen = _screenStream;
     _screenStream = null;
     _screenSharingEnabled = false;
@@ -851,6 +965,7 @@ class CsnBasicCallController extends CsnCallController {
         await CsnMediaProjectionBridge.stopForegroundService();
       }
       _sendLocalMediaState();
+      _ssLog('stopScreenShare done (local video disabled)');
       return;
     }
 
@@ -865,14 +980,42 @@ class CsnBasicCallController extends CsnCallController {
         ? local!.getVideoTracks().first
         : null;
     if (videoTrack != null && local != null) {
+      _ssLog('restoring camera track=${_trackInfo(videoTrack)}');
       await _switchOutgoingVideoTrack(track: videoTrack, stream: local);
+      await _applyVideoSenderEncodingForCamera();
     }
+    _ssLog('camera restored, renegotiating');
     await _safeRenegotiate();
     await _refreshLocalPreview();
     if (WebRTC.platformIsAndroid) {
       await CsnMediaProjectionBridge.stopForegroundService();
     }
     _sendLocalMediaState();
+    _ssLog('stopScreenShare complete');
+  }
+
+  Future<void> _applyVideoSenderEncodingForCamera() async {
+    final sender = _videoSender;
+    if (sender == null) return;
+    try {
+      final params = sender.parameters;
+      final encodings = params.encodings;
+      if (encodings == null || encodings.isEmpty) {
+        _ssLog('video sender has no encodings to tune for camera');
+        return;
+      }
+      for (final encoding in encodings) {
+        encoding.maxBitrate = 1200000;
+        encoding.maxFramerate = 24;
+        encoding.scaleResolutionDownBy = 1.0;
+      }
+      params.encodings = encodings;
+      final ok = await sender.setParameters(params);
+      _ssLog(
+          'video sender tuned for camera ok=$ok encodings=${encodings.length}');
+    } catch (error, stackTrace) {
+      _ssLog('failed to tune video sender for camera', error, stackTrace);
+    }
   }
 
   void _setScreenTrackOnEnded(MediaStreamTrack track) {
@@ -935,12 +1078,51 @@ class CsnBasicCallController extends CsnCallController {
   Future<void> _safeRenegotiate() async {
     if (_negotiating) return;
     if (_remoteUserId == null) return;
+    final pc = _peerConnection;
+    if (pc == null) return;
+    if (!_canCreateOfferNow(pc)) {
+      _renegotiatePending = true;
+      _ssLog('safeRenegotiate deferred signalingState=${pc.signalingState}');
+      return;
+    }
     _negotiating = true;
     try {
+      _ssLog('safeRenegotiate start');
       await _createAndSendOffer();
+      _ssLog('safeRenegotiate complete');
+    } catch (error, stackTrace) {
+      if (_isWrongSignalingStateError(error)) {
+        _renegotiatePending = true;
+        _ssLog('safeRenegotiate wrong-state deferred', error, stackTrace);
+        return;
+      }
+      rethrow;
     } finally {
       _negotiating = false;
     }
+  }
+
+  bool _canCreateOfferNow(RTCPeerConnection pc) {
+    final state = pc.signalingState;
+    return !_handlingOffer &&
+        (state == null || state == RTCSignalingState.RTCSignalingStateStable);
+  }
+
+  bool _isWrongSignalingStateError(Object error) {
+    final text = error.toString();
+    return text.contains('Called in wrong state') ||
+        text.contains('setLocalDescription') ||
+        text.contains('have-remote-offer');
+  }
+
+  Future<void> _triggerPendingRenegotiationIfPossible() async {
+    if (!_renegotiatePending) return;
+    final pc = _peerConnection;
+    if (pc == null) return;
+    if (!_canCreateOfferNow(pc)) return;
+    _renegotiatePending = false;
+    _ssLog('triggerPendingRenegotiationIfPossible running');
+    await _safeRenegotiate();
   }
 
   void _sendLocalMediaState() {
