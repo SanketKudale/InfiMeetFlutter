@@ -319,11 +319,19 @@ class _VideoView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final renderer = participant.renderer!;
-    return RTCVideoView(
+    Widget view = RTCVideoView(
       renderer,
       objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
       mirror: participant.isLocal,
     );
+    if (!participant.isLocal) {
+      view = Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.diagonal3Values(-1, 1, 1),
+        child: view,
+      );
+    }
+    return view;
   }
 }
 

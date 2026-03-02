@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Removed manual rotate/mirror controls from remote participant tile in `CsnCallScreen`.
+- Fixed incorrect 90-degree remote tile rotation caused by extra UI-level rotation transforms.
+- Fixed remote video mirroring so both executive and user see non-mirrored remote video consistently.
+
 ## 0.3.2
 
 - Added complete executive management from admin:
